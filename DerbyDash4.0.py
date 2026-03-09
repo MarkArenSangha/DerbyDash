@@ -65,27 +65,36 @@ HIT_DEPTH_MAX = 0.13
 # ─────────────────────────────────────────────────────────────────────────────
 #  DRINKS CATALOGUE
 # ─────────────────────────────────────────────────────────────────────────────
+# blur=beer, wobble=cider, speed=whiskey, delay=vodka.
+# Multipliers reflect how punishing each effect is in-game.
 DRINKS = [
-    dict(name="WATER",   emoji="💧", symbol="~", mult=1.0, drunk=0, color=(126, 200, 227)),
-    dict(name="BEER",    emoji="🍺", symbol="B", mult=1.2, drunk=1, color=(240, 165,   0)),
-    dict(name="CIDER",   emoji="🍎", symbol="C", mult=1.5, drunk=2, color=(192,  57,  43)),
-    dict(name="WHISKEY", emoji="🥃", symbol="W", mult=2.0, drunk=3, color=(139,  69,  19)),
-    dict(name="VODKA",   emoji="🍸", symbol="V", mult=2.5, drunk=5, color=(160, 216, 239)),
+    dict(name="WATER",   emoji="💧", symbol="~", mult=1.0,
+         blur=0, wobble=0, speed=0, delay=0, color=(126, 200, 227)),
+    dict(name="BEER",    emoji="🍺", symbol="B", mult=1.4,
+         blur=1, wobble=0, speed=0, delay=0, color=(240, 165,   0)),
+    dict(name="CIDER",   emoji="🍎", symbol="C", mult=1.8,
+         blur=0, wobble=1, speed=0, delay=0, color=(192,  57,  43)),
+    dict(name="WHISKEY", emoji="🥃", symbol="W", mult=2.5,
+         blur=0, wobble=0, speed=1, delay=0, color=(139,  69,  19)),
+    dict(name="VODKA",   emoji="🍸", symbol="V", mult=3.5,
+         blur=0, wobble=0, speed=0, delay=1, color=(160, 216, 239)),
 ]
-MAX_DRINKS = 5
+MAX_DRINKS = 10
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  OBSTACLE CATALOGUE  (h/w are fractions of lane-width at full scale)
 # ─────────────────────────────────────────────────────────────────────────────
+# block_jump=True → obstacle is too tall to jump; drawn with X overlay.
+# All obstacles now require jumping (no duck mechanic).
 OBS_TYPES = [
     dict(label="FENCE",   color=(200, 168, 75), alt=(139, 105, 20),
-         rel_w=0.90, rel_h=0.55, block_jump=False, block_duck=True),
+         rel_w=0.90, rel_h=0.55, block_jump=False),
     dict(label="HAY",     color=(232, 192, 96), alt=(160, 120, 48),
-         rel_w=0.95, rel_h=0.50, block_jump=False, block_duck=True),
-    dict(label="BARRIER", color=(231,  76, 60), alt=(192,  57, 43),
-         rel_w=1.00, rel_h=0.35, block_jump=True,  block_duck=False),
+         rel_w=0.95, rel_h=0.50, block_jump=False),
+    dict(label="WALL",    color=(140,  70, 50), alt=(100,  42, 28),
+         rel_w=1.00, rel_h=0.95, block_jump=True),
     dict(label="HURDLE",  color=(93,  173, 226), alt=(41, 128, 185),
-         rel_w=0.85, rel_h=0.60, block_jump=False, block_duck=True),
+         rel_w=0.85, rel_h=0.60, block_jump=False),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +140,6 @@ class Obstacle:
         self.rel_w      = otype["rel_w"]
         self.rel_h      = otype["rel_h"]
         self.block_jump = otype["block_jump"]
-        self.block_duck = otype["block_duck"]
         self.is_ghost   = False   # set True for passable triple-fence ghost lane
 
     def update(self, speed: float):
@@ -168,8 +176,8 @@ class Obstacle:
                 self._draw_fence(surf, r)
             elif self.label == "HAY":
                 self._draw_hay(surf, r)
-            elif self.label == "BARRIER":
-                self._draw_barrier(surf, r)
+            elif self.label == "WALL":
+                self._draw_wall(surf, r)
             elif self.label == "HURDLE":
                 self._draw_hurdle(surf, r)
 
@@ -228,31 +236,41 @@ class Obstacle:
         pygame.draw.rect(surf, hi_col, (r.x + 3, r.y + 3, r.width - 6, max(2, r.height // 6)), border_radius=3)
         pygame.draw.rect(surf, (0, 0, 0), r, 1, border_radius=5)
 
-    def _draw_barrier(self, surf, r):
-        # Drop shadow
+    def _draw_wall(self, surf, r):
+        """Tall impassable wall — block_jump=True. Drawn with brick texture + red X."""
+        # Shadow
         sh = pygame.Surface((r.width + 8, 10), pygame.SRCALPHA)
-        pygame.draw.ellipse(sh, (0, 0, 0, 110), (0, 0, r.width + 8, 10))
+        pygame.draw.ellipse(sh, (0, 0, 0, 120), (0, 0, r.width + 8, 10))
         surf.blit(sh, (r.x - 4, r.bottom + 1))
-        # Draw onto a clipped subsurface to contain the stripes
-        clip_surf = pygame.Surface((r.width, r.height), pygame.SRCALPHA)
-        clip_surf.fill(self.alt)
-        stripe_w = max(5, r.width // 7)
-        for i in range(-2, 10):
-            sx = i * stripe_w * 2
-            pts = [
-                (sx,                 0),
-                (sx + stripe_w,      0),
-                (sx + stripe_w + r.height, r.height),
-                (sx + r.height,      r.height),
-            ]
-            pygame.draw.polygon(clip_surf, (240, 220, 40), pts)
-        # Bevel border
-        pygame.draw.rect(clip_surf, self.alt, (0, 0, r.width, r.height), 3, border_radius=3)
-        surf.blit(clip_surf, (r.x, r.y))
-        # Bright top edge highlight
-        hi = tuple(min(255, c + 60) for c in self.alt)
-        pygame.draw.rect(surf, hi, (r.x, r.y, r.width, max(2, r.height // 5)), border_radius=3)
-        pygame.draw.rect(surf, (0, 0, 0), r, 2, border_radius=3)
+        # Brick base colour
+        pygame.draw.rect(surf, self.color, r, border_radius=2)
+        # Brick rows
+        bh = max(4, r.height // 6)
+        for row in range(r.height // bh + 1):
+            by = r.y + row * bh
+            offset = (row % 2) * (r.width // 4)
+            bw = max(6, r.width // 3)
+            dark = tuple(max(0, c - 30) for c in self.color)
+            for col in range(-1, 5):
+                bx = r.x + col * bw + offset
+                bx = max(r.x, min(bx, r.right - 2))
+                pygame.draw.rect(surf, dark,
+                    (bx, max(r.y, by), min(2, r.right - bx), min(bh, r.bottom - by)))
+            pygame.draw.line(surf, tuple(max(0, c - 20) for c in self.color),
+                             (r.x, by), (r.right, by), 1)
+        # Highlight top edge
+        hi = tuple(min(255, c + 50) for c in self.color)
+        pygame.draw.rect(surf, hi, (r.x, r.y, r.width, max(2, r.height // 8)), border_radius=2)
+        pygame.draw.rect(surf, (0, 0, 0), r, 2, border_radius=2)
+        # Big red X — "cannot jump this"
+        if r.width > 8 and r.height > 8:
+            pad = max(4, min(r.width, r.height) // 6)
+            x1, y1, x2, y2 = r.x + pad, r.y + pad, r.right - pad, r.bottom - pad
+            pygame.draw.line(surf, (220, 40, 40), (x1, y1), (x2, y2), max(3, r.width // 8))
+            pygame.draw.line(surf, (220, 40, 40), (x2, y1), (x1, y2), max(3, r.width // 8))
+            # White border on X for readability
+            pygame.draw.line(surf, (255, 200, 200), (x1, y1), (x2, y2), max(1, r.width // 16))
+            pygame.draw.line(surf, (255, 200, 200), (x2, y1), (x1, y2), max(1, r.width // 16))
 
     def _draw_hurdle(self, surf, r):
         # Drop shadow
@@ -290,14 +308,15 @@ class Guard:
     def update(self, speed: float, player_lane: int):
         self.depth -= speed * 0.70
         self.anim  += 1
-        # Switch toward player lane exactly once.
-        # Random window: depth 0.65→0.50. Hard deadline: force switch at depth 0.45
-        # so the guard ALWAYS finishes moving well before reaching the hit zone (0.13).
+        # Switch ~2 seconds before contact. Guard moves at speed*0.70.
+        # 2s at FPS=60: depth_covered = 2*60*speed*0.70. At speed≈0.008: ~0.67.
+        # Contact at depth≈0.07 (centre of hit zone), so switch by depth≈0.74.
+        # Random window: 0.90→0.78. Hard deadline: 0.76 (guarantees 2s gap).
         if not self.has_switched:
-            if self.depth < 0.65 and random.random() < 0.025:
+            if self.depth < 0.90 and random.random() < 0.030:
                 self.lane         = player_lane
                 self.has_switched = True
-            elif self.depth <= 0.45:
+            elif self.depth <= 0.76:
                 self.lane         = player_lane
                 self.has_switched = True
 
@@ -381,9 +400,10 @@ class Guard:
 # ─────────────────────────────────────────────────────────────────────────────
 class DerbyDash:
     # ── states ────────────────────────────────────────────────────────────────
-    STATE_BAR      = "bar"
-    STATE_RACE     = "race"
-    STATE_GAMEOVER = "gameover"
+    STATE_BAR       = "bar"
+    STATE_RACE      = "race"
+    STATE_GAMEOVER  = "gameover"
+    STATE_CUTSCENE  = "cutscene"
 
     def __init__(self):
         pygame.init()
@@ -398,15 +418,38 @@ class DerbyDash:
         self.f_small  = pygame.font.SysFont("monospace", 13)
         self.f_tiny   = pygame.font.SysFont("monospace", 11)
 
+        # Cutscene images (bar → race transition)
+        self._cutscene_images = []
+        for _img_path in [
+            "/mnt/user-data/uploads/derby_dash_image_1.png",
+            "/mnt/user-data/uploads/derby_dash_image_2.png",
+            "/mnt/user-data/uploads/derby_dash_image_3.png",
+        ]:
+            try:
+                img = pygame.image.load(_img_path).convert()
+                img = pygame.transform.smoothscale(img, (W, H))
+                self._cutscene_images.append(img)
+            except Exception:
+                pass  # silently skip missing images
+        self._cutscene_idx   = 0    # which image we're on
+        self._cutscene_alpha = 0    # fade-in alpha (0→255)
+        self._cutscene_fade  = "in" # "in" | "hold" | "out"
+        self._cutscene_timer = 0
+        self.high_scores   = []   # list of (score, survive_time, drunk_level)
+        self.last_score    = None
         self._reset_bar()
         self.state = self.STATE_BAR
 
     # ── reset helpers ─────────────────────────────────────────────────────────
     def _reset_bar(self):
-        self.drink_history = []   # list of drink dicts added
-        self.drunk_level   = 0
+        self.drink_history = []
         self.multiplier    = 1.0
         self.selected_drink = 0
+        self.fx_blur   = 0   # beer stacks
+        self.fx_wobble = 0   # cider stacks
+        self.fx_speed  = 0   # whiskey stacks
+        self.fx_delay  = 0   # vodka stacks
+        self.drunk_level = 0  # convenience total for spawn_depth / triple-fence gate
 
     def _reset_race(self):
         self.obstacles     = []
@@ -414,7 +457,6 @@ class DerbyDash:
         self.player_lane   = 1
         self.player_y      = 0.0   # px offset (negative = in air)
         self.is_jumping    = False
-        self.is_ducking    = False
         self.jump_vel      = 0.0
         self.base_score    = 0
         self.survive_time  = 0.0
@@ -430,6 +472,7 @@ class DerbyDash:
         self.stumble_timer = 0
         self.stumble_dx    = 0.0
         self.drunk_flash   = 0     # countdown for flash overlay
+        # fx_ fields are set in _reset_bar and persist into the race
 
     # ── main loop ─────────────────────────────────────────────────────────────
     def run(self):
@@ -439,6 +482,9 @@ class DerbyDash:
             if self.state == self.STATE_BAR:
                 self._update_bar()
                 self._draw_bar()
+            elif self.state == self.STATE_CUTSCENE:
+                self._update_cutscene()
+                self._draw_cutscene()
             elif self.state == self.STATE_RACE:
                 self._update_race()
                 self._draw_race()
@@ -457,6 +503,8 @@ class DerbyDash:
             if event.type == pygame.KEYDOWN:
                 if self.state == self.STATE_BAR:
                     self._bar_keydown(event.key)
+                elif self.state == self.STATE_CUTSCENE:
+                    self._cutscene_advance()
                 elif self.state == self.STATE_RACE:
                     self._race_keydown(event.key)
                 elif self.state == self.STATE_GAMEOVER:
@@ -464,10 +512,11 @@ class DerbyDash:
                         self._reset_bar()
                         self.state = self.STATE_BAR
 
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if self.state == self.STATE_CUTSCENE:
+                    self._cutscene_advance()
             if event.type == pygame.KEYUP:
-                if self.state == self.STATE_RACE:
-                    if event.key == pygame.K_DOWN:
-                        self.is_ducking = False
+                pass  # no keyup actions currently needed
 
     # ─────────────────────────────────────────────────────────────────────────
     #  BAR PHASE
@@ -489,104 +538,143 @@ class DerbyDash:
             return
         d = DRINKS[self.selected_drink]
         self.drink_history.append(d)
-        self.drunk_level += d["drunk"]
+        self.fx_blur   += d["blur"]
+        self.fx_wobble += d["wobble"]
+        self.fx_speed  += d["speed"]
+        self.fx_delay  += d["delay"]
+        self.drunk_level = self.fx_blur + self.fx_wobble + self.fx_speed + self.fx_delay
         self.multiplier  *= d["mult"]
 
     def _remove_drink(self):
         if not self.drink_history:
             return
         d = self.drink_history.pop()
-        self.drunk_level -= d["drunk"]
-        self.multiplier  /= d["mult"]
-        self.drunk_level  = max(0, self.drunk_level)
-        self.multiplier   = max(1.0, self.multiplier)
+        self.fx_blur   = max(0, self.fx_blur   - d["blur"])
+        self.fx_wobble = max(0, self.fx_wobble - d["wobble"])
+        self.fx_speed  = max(0, self.fx_speed  - d["speed"])
+        self.fx_delay  = max(0, self.fx_delay  - d["delay"])
+        self.drunk_level = self.fx_blur + self.fx_wobble + self.fx_speed + self.fx_delay
+        self.multiplier  = max(1.0, self.multiplier / d["mult"])
 
     def _start_race(self):
         self._reset_race()
-        self.state = self.STATE_RACE
+        if self._cutscene_images:
+            self._cutscene_idx   = 0
+            self._cutscene_alpha = 0
+            self._cutscene_fade  = "in"
+            self._cutscene_timer = 0
+            self.state = self.STATE_CUTSCENE
+        else:
+            self.state = self.STATE_RACE
 
     def _update_bar(self):
         pass  # nothing needs updating every frame in bar state
 
     def _draw_bar_patrons(self, surf, counter_y, t):
-        """Draw 4 pub patrons sitting on bar stools, animated gently."""
-        # Fixed seats either side of the player gap (two left, two right)
+        """Draw 4 pub patrons STANDING on bar stool footrests, leaning on counter.
+        The footrest ring is ~60px below the counter. Patrons stand on it with
+        bent knees, feet on the ring, torso upright leaning forward onto the bar.
+        This matches barman scale (~95px torso, head r=20)."""
         seats = [
-            {"x": 95,      "facing":  1, "shirt": (160,  40,  40), "hair": (30, 18, 6),  "glass_col": (240,190, 50,160)},
-            {"x": 215,     "facing":  1, "shirt": ( 40,  90, 160), "hair": (18, 12, 4),  "glass_col": (180,220,255,150)},
-            {"x": W - 215, "facing": -1, "shirt": ( 50, 140,  60), "hair": (60, 40,18),  "glass_col": (240,190, 50,160)},
-            {"x": W - 95,  "facing": -1, "shirt": (130,  60, 130), "hair": (20, 14, 4),  "glass_col": (180,220,255,150)},
+            {"x": 90,      "facing":  1, "shirt": (155,  38,  38), "hair": (32, 18, 6),  "skin": (205,160,112), "glass_col": (240,190, 50,165)},
+            {"x": 210,     "facing":  1, "shirt": ( 38,  88, 158), "hair": (20, 12, 4),  "skin": (218,172,125), "glass_col": (180,220,255,155)},
+            {"x": W - 210, "facing": -1, "shirt": ( 48, 138,  58), "hair": (62, 42, 18), "skin": (198,148, 98), "glass_col": (240,190, 50,165)},
+            {"x": W - 90,  "facing": -1, "shirt": (128,  58, 128), "hair": (22, 14, 4),  "skin": (210,165,118), "glass_col": (180,220,255,155)},
         ]
+
+        # The stool footrest ring sits this many px below the counter top
+        FOOTREST_OFFSET = 62
+
         for i, p in enumerate(seats):
-            px2   = p["x"]
-            phase = i * math.pi * 0.5        # stagger sway phases
-            sway  = int(math.sin(t * 0.55 + phase) * 2)
-            nod   = int(math.sin(t * 0.38 + phase) * 2)
+            px2        = p["x"]
+            phase      = i * math.pi * 0.5
+            sway       = int(math.sin(t * 0.52 + phase) * 2)
+            nod        = int(math.sin(t * 0.36 + phase) * 2)
+            tor_x      = px2 + sway
 
-            # ── Legs hanging down from stool ──────────────────────────────────
-            leg_y_top = counter_y + 2
-            leg_y_bot = counter_y + 55
-            for lx_off in (-8, 8):
-                pygame.draw.line(surf, (30, 20, 8),
-                                 (px2 + lx_off, leg_y_top),
-                                 (px2 + lx_off + p["facing"] * 3, leg_y_bot), 5)
-            # Shoes
-            for lx_off in (-8, 8):
-                pygame.draw.ellipse(surf, (18, 12, 4),
-                                    (px2 + lx_off + p["facing"] * 3 - 7,
-                                     leg_y_bot - 2, 14, 7))
+            # Key y-positions — patron SITS on stool seat, feet on footrest
+            seat_y     = counter_y + 28              # patrons sit lower (pushed down)
+            foot_y     = counter_y + FOOTREST_OFFSET + 28 # footrest ring (lowered)
+            hip_y      = seat_y                      # hips rest on seat
+            tor_bot    = hip_y - 2                   # base of torso
+            tor_top    = tor_bot - 92 + sway         # top of torso
 
-            # ── Torso ─────────────────────────────────────────────────────────
-            tor_bot_y = counter_y - 2
-            tor_top_y = tor_bot_y - 50 + sway
-            tor_x     = px2 + sway
+            # ── Legs: hip on seat → knee bend → foot on footrest ──────────────
+            for side, lx_off in ((-1, -12), (1, 12)):
+                hip_x   = tor_x + lx_off
+                # Knee hangs below seat, bent forward
+                knee_x  = hip_x + side * 6
+                knee_y  = seat_y + 28
+                # Foot rests on footrest ring
+                foot_x  = px2 + lx_off * 0.7
+                # Upper leg: hip → knee
+                pygame.draw.line(surf, (28, 18, 6),
+                                 (int(hip_x), hip_y), (int(knee_x), knee_y), 8)
+                # Lower leg: knee → foot
+                pygame.draw.line(surf, (28, 18, 6),
+                                 (int(knee_x), knee_y), (int(foot_x), foot_y), 8)
+                # Shoe on footrest
+                pygame.draw.ellipse(surf, (16, 10, 3),
+                                    (int(foot_x) - 10, foot_y - 3, 20, 9))
+
+            # ── Torso — upright, leaning slightly toward counter ──────────────
+            pygame.draw.rect(surf, p["shirt"],
+                             (tor_x - 24, tor_top, 48, tor_bot - tor_top),
+                             border_radius=6)
+            # Shirt collar / lapel
+            pygame.draw.polygon(surf, (225, 220, 210), [
+                (tor_x - 8, tor_top),
+                (tor_x,     tor_top + 20),
+                (tor_x + 8, tor_top),
+            ])
+
+            # ── Arm reaching for drink on counter ─────────────────────────────
+            arm_reach = int(math.sin(t * 0.26 + phase) * 8) + 18
+            arm_x  = tor_x + p["facing"] * arm_reach
+            arm_y  = tor_top + 30
             pygame.draw.line(surf, p["shirt"],
-                             (tor_x, tor_bot_y), (tor_x, tor_top_y), 18)
+                             (tor_x + p["facing"] * 20, arm_y),
+                             (arm_x, arm_y + 8), 10)
+            pygame.draw.circle(surf, p["skin"], (arm_x, arm_y + 8), 6)
 
-            # ── Arm reaching for drink ─────────────────────────────────────────
-            arm_reach = int(math.sin(t * 0.28 + phase) * 6) + 10
-            arm_x = tor_x + p["facing"] * arm_reach
-            arm_y = tor_top_y + 18
+            # Glass in hand
+            gx = arm_x + p["facing"] * 8
+            gy = arm_y + 2
+            gl = pygame.Surface((22, 30), pygame.SRCALPHA)
+            pygame.draw.rect(gl, (195, 215, 235, 72), (1,  0, 20, 28), border_radius=3)
+            pygame.draw.rect(gl, p["glass_col"],       (2,  8, 18, 18), border_radius=2)
+            pygame.draw.rect(gl, (255,255,255, 115),   (3, 10,  5, 14))
+            surf.blit(gl, (gx - 11, gy - 12))
+
+            # ── Other arm resting elbow on counter ────────────────────────────
+            rest_x = tor_x - p["facing"] * 20
             pygame.draw.line(surf, p["shirt"],
-                             (tor_x, arm_y),
-                             (arm_x, arm_y + 8), 7)
-            # Hand dot
-            pygame.draw.circle(surf, (210, 168, 118), (arm_x, arm_y + 8), 4)
-
-            # ── Glass being held ──────────────────────────────────────────────
-            gx = arm_x + p["facing"] * 6
-            gy = arm_y + 6
-            gl = pygame.Surface((16, 22), pygame.SRCALPHA)
-            pygame.draw.rect(gl, (195, 215, 235, 70), (1,  0, 14, 20), border_radius=2)
-            pygame.draw.rect(gl, p["glass_col"],       (2,  6, 12, 12), border_radius=2)
-            pygame.draw.rect(gl, (255,255,255, 110),   (3,  8,  4, 10))
-            surf.blit(gl, (gx - 8, gy - 10))
-
-            # ── Other arm resting on bar ──────────────────────────────────────
-            rest_x = tor_x - p["facing"] * 16
-            pygame.draw.line(surf, p["shirt"],
-                             (tor_x, arm_y),
-                             (rest_x, counter_y - 2), 7)
+                             (tor_x - p["facing"] * 20, arm_y),
+                             (rest_x, counter_y - 4), 10)
 
             # ── Head ──────────────────────────────────────────────────────────
+            head_r = 20
             head_x = tor_x + sway // 2
-            head_y = tor_top_y - 12 + nod
-            pygame.draw.circle(surf, (210, 168, 118), (head_x, head_y), 12)
-            # Hair
+            head_y = tor_top - head_r + 2 + nod
+            pygame.draw.circle(surf, p["skin"], (head_x, head_y), head_r)
             pygame.draw.ellipse(surf, p["hair"],
-                                (head_x - 12, head_y - 12, 24, 14))
-            # Face turned slightly toward bar
+                                (head_x - head_r, head_y - head_r,
+                                 head_r * 2, head_r + 4))
             eye_side = p["facing"]
-            pygame.draw.circle(surf, (35, 22, 8),
-                               (head_x + eye_side * 4, head_y - 1), 2)
-            # Ear on far side
-            pygame.draw.circle(surf, (195, 148, 105),
-                               (head_x - eye_side * 10, head_y + 1), 4)
+            pygame.draw.circle(surf, (40, 25, 8),
+                               (head_x + eye_side * 6, head_y - 2), 3)
+            pygame.draw.circle(surf, (230, 200, 150),
+                               (head_x + eye_side * 7, head_y - 3), 1)
+            pygame.draw.circle(surf, tuple(max(0, c - 16) for c in p["skin"]),
+                               (head_x - eye_side * 18, head_y + 2), 5)
+            pygame.draw.arc(surf, (160, 100, 70),
+                            (head_x + eye_side * 2, head_y + 8, 10, 6),
+                            0, math.pi, 2)
 
     def _draw_bar(self):
         surf = self.screen
         t    = pygame.time.get_ticks() / 1000.0
-        max_drunk = 15
+        max_drunk = 10
 
         # ── BACKGROUND — warm amber pub interior ──────────────────────────────
         for i in range(H):
@@ -650,12 +738,19 @@ class DerbyDash:
         for xi in range(0, W, 55):
             pygame.draw.line(surf, (62, 35, 8), (xi, counter_y+24), (xi+38, H), 1)
 
-        # Stools
-        for sx in (W//2 - 130, W//2 + 130):
+        # Stools — draw all 6 (4 patron stools + 2 centre gap stools)
+        all_stool_x = [90, 210, W//2 - 130, W//2 + 130, W - 210, W - 90]
+        for sx in all_stool_x:
+            # Seat
             pygame.draw.ellipse(surf, (68, 38, 8),  (sx-30, counter_y-6, 60, 16))
             pygame.draw.ellipse(surf, (88, 52, 14), (sx-28, counter_y-8, 56, 12))
-            pygame.draw.line(surf, (78, 46, 10), (sx, counter_y+10), (sx, H-22), 6)
-            pygame.draw.line(surf, (78, 46, 10), (sx-22, H-42), (sx+22, H-42), 4)
+            # Central pole all the way to floor
+            pygame.draw.line(surf, (78, 46, 10), (sx, counter_y+10), (sx, H - 6), 6)
+            # Footrest ring
+            footrest_y = counter_y + 62
+            pygame.draw.line(surf, (78, 46, 10), (sx-22, footrest_y), (sx+22, footrest_y), 4)
+            # Base spread at floor
+            pygame.draw.line(surf, (78, 46, 10), (sx-26, H - 6), (sx+26, H - 6), 5)
 
         # Glasses on counter
         for gx, gcol in ((W//2-65, (240,195,55,170)), (W//2+65, (175,215,255,155))):
@@ -685,12 +780,33 @@ class DerbyDash:
             (bm_x, bm_ground-101)
         ])
 
-        # Arms wiping bar
-        wipe = int(math.sin(t * 1.4) * 28)
-        pygame.draw.line(surf, (228,222,212), (bm_x-24, bm_ground-65), (bm_x-52+wipe, bm_ground-18), 11)
-        pygame.draw.line(surf, (228,222,212), (bm_x+24, bm_ground-65), (bm_x+22+wipe, bm_ground-18), 11)
-        # Cloth
-        pygame.draw.ellipse(surf, (195,192,178), (bm_x+14+wipe, bm_ground-24, 20, 10))
+        # Arms shaking a cocktail shaker — shaker positioned to the RIGHT of head
+        shake_x = int(math.sin(t * 4.2) * 8)    # fast horizontal shake
+        shake_y = int(math.sin(t * 4.2 * 1.3) * 4)
+        # Shaker sits to the right of the barman's head, raised
+        shaker_cx = bm_x + 70 + shake_x          # 70px right of centre
+        shaker_cy = bm_ground - 130 + shake_y     # head-height
+        shaker_x  = shaker_cx - 10
+        shaker_y  = shaker_cy - 20
+        # Right arm reaches out toward shaker from body
+        pygame.draw.line(surf, (228,222,212),
+                         (bm_x + 24, bm_ground - 65),
+                         (shaker_cx + 10, shaker_cy + 8), 11)
+        # Left arm also extends (holds from other side / steadies)
+        pygame.draw.line(surf, (228,222,212),
+                         (bm_x - 10, bm_ground - 70),
+                         (shaker_cx - 10, shaker_cy + 8), 9)
+        # Shaker — silver cylinder
+        pygame.draw.rect(surf, (195, 198, 205), (shaker_x, shaker_y, 20, 38), border_radius=4)
+        pygame.draw.rect(surf, (215, 220, 228), (shaker_x + 2, shaker_y + 2, 6, 34))  # highlight
+        pygame.draw.rect(surf, (175, 178, 185), (shaker_x, shaker_y, 20, 8), border_radius=4)  # cap
+        # Drops flying off
+        for di in range(3):
+            drop_phase = t * 5.0 + di * 2.1
+            drop_x = shaker_cx + int(math.sin(drop_phase) * 14)
+            drop_y = shaker_y - 4 - int(abs(math.sin(drop_phase * 0.7)) * 12)
+            if int(drop_phase) % 2 == 0:
+                pygame.draw.circle(surf, (140, 200, 240), (drop_x, drop_y), 2)
 
         # Head
         pygame.draw.circle(surf, (208,165,118), (bm_x, bm_ground-124), 22)
@@ -769,7 +885,13 @@ class DerbyDash:
             surf.blit(sym, sym.get_rect(center=(cx+card_w//2, counter_y-card_h+24)))
             nm2 = self.f_small.render(d2["name"],  True, d2["color"])
             surf.blit(nm2, nm2.get_rect(center=(cx+card_w//2, counter_y-card_h+50)))
-            ms2 = self.f_tiny.render(f"x{d2['mult']:.1f}  +{d2['drunk']}drunk", True, (175,138,58))
+            effects = []
+            if d2["blur"]:   effects.append(f"+{d2['blur']}blur")
+            if d2["wobble"]: effects.append(f"+{d2['wobble']}wobble")
+            if d2["speed"]:  effects.append(f"+{d2['speed']}speed")
+            if d2["delay"]:  effects.append(f"+{d2['delay']}delay")
+            eff_str = "  ".join(effects) if effects else "no effect"
+            ms2 = self.f_tiny.render(f"x{d2['mult']:.1f}  {eff_str}", True, (175,138,58))
             surf.blit(ms2, ms2.get_rect(center=(cx+card_w//2, counter_y-card_h+68)))
             if sel:
                 ar = self.f_tiny.render("SELECTED", True, d2["color"])
@@ -778,7 +900,7 @@ class DerbyDash:
         # ── ORDER HISTORY + DRUNK METER ───────────────────────────────────────
         hist_lbl = self.f_tiny.render(
             f"ORDERED: {len(self.drink_history)}/{MAX_DRINKS}    "
-            f"MULT: x{self.multiplier:.2f}    DRUNK: {self.drunk_level}",
+            f"MULT: x{self.multiplier:.2f}   blur:{self.fx_blur} wobble:{self.fx_wobble} speed:{self.fx_speed} delay:{self.fx_delay}",
             True, C_DARK_GOLD)
         surf.blit(hist_lbl, hist_lbl.get_rect(center=(W//2, counter_y+10)))
         mw, mh = 255, 7
@@ -793,6 +915,39 @@ class DerbyDash:
         wl = self.f_tiny.render("WRECKED", True, C_DARK_GOLD)
         surf.blit(sl, (mx2, my2+mh+2))
         surf.blit(wl, (mx2+mw-wl.get_width(), my2+mh+2))
+
+        # ── SCOREBOARD — top right of bar ────────────────────────────────────
+        sb_x, sb_y, sb_w = 12, 148, 200
+        sb_h = min(8, max(1, len(self.high_scores))) * 20 + 52
+        draw_round_rect(surf, (18, 8, 0), (sb_x, sb_y, sb_w, sb_h), 8,
+                        border=1, border_color=(100, 72, 12))
+        # Title
+        sb_title = self.f_small.render("HIGH SCORES", True, C_GOLD)
+        surf.blit(sb_title, sb_title.get_rect(center=(sb_x + sb_w // 2, sb_y + 14)))
+        pygame.draw.line(surf, C_DARK_GOLD, (sb_x + 8, sb_y + 24), (sb_x + sb_w - 8, sb_y + 24), 1)
+        if not self.high_scores:
+            empty = self.f_tiny.render("no scores yet", True, (100, 80, 30))
+            surf.blit(empty, empty.get_rect(center=(sb_x + sb_w // 2, sb_y + 42)))
+        else:
+            for ri, (sc2, st2, dl2) in enumerate(self.high_scores[:8]):
+                ry = sb_y + 32 + ri * 20
+                rank_col = C_GOLD if ri == 0 else (C_WHITE if ri < 3 else (140, 110, 50))
+                medal = ("#1", "#2", "#3")[ri] if ri < 3 else f"#{ri+1}"
+                rk = self.f_tiny.render(medal, True, rank_col)
+                surf.blit(rk, (sb_x + 8, ry))
+                sc_t2 = self.f_tiny.render(f"{sc2:,}", True, rank_col)
+                surf.blit(sc_t2, (sb_x + 34, ry))
+                info = self.f_tiny.render(f"{st2:.0f}s  d{dl2}", True, (100, 80, 30))
+                surf.blit(info, (sb_x + 100, ry))
+        # Last score highlight
+        if self.last_score:
+            ls = self.last_score
+            ls_y = sb_y + sb_h + 6
+            ls_bg = pygame.Surface((sb_w, 18), pygame.SRCALPHA)
+            ls_bg.fill((40, 20, 0, 160))
+            surf.blit(ls_bg, (sb_x, ls_y))
+            ls_t = self.f_tiny.render(f"LAST: {ls[0]:,}  ({ls[1]:.0f}s, drunk {ls[2]})", True, C_DARK_GOLD)
+            surf.blit(ls_t, ls_t.get_rect(center=(sb_x + sb_w // 2, ls_y + 9)))
 
         # ── CONTROLS FOOTER ───────────────────────────────────────────────────
         ctrl_y = H - 36
@@ -812,15 +967,14 @@ class DerbyDash:
     #  RACE PHASE
     # ─────────────────────────────────────────────────────────────────────────
     def _race_keydown(self, key):
-        delay_frames = self.drunk_level * 5
+        delay_frames = self.fx_delay * 2   # vodka: 2 frames per drink (~33ms each)
         if key == pygame.K_LEFT:
             self.input_queue.append((self.race_frame + delay_frames, "left"))
         elif key == pygame.K_RIGHT:
             self.input_queue.append((self.race_frame + delay_frames, "right"))
         elif key == pygame.K_UP:
             self.input_queue.append((self.race_frame + delay_frames, "jump"))
-        elif key == pygame.K_DOWN:
-            self.is_ducking = True  # duck is instant (hold key), no delay
+
 
     def _process_input_queue(self):
         remaining = []
@@ -832,7 +986,7 @@ class DerbyDash:
                     self.player_lane = min(2, self.player_lane + 1)
                 elif action == "jump" and not self.is_jumping:
                     self.is_jumping = True
-                    self.jump_vel   = -16.0
+                    self.jump_vel   = -22.0   # increased for higher arc
             else:
                 remaining.append((fire_at, action))
         self.input_queue = remaining
@@ -847,7 +1001,10 @@ class DerbyDash:
         """
         roll = random.random()
 
-        if roll < 0.15:
+        # Triple fence only appears when drunk — sober players skip it entirely
+        triple_threshold = 0.15 if self.drunk_level >= 3 else 0.0
+
+        if roll < triple_threshold:
             # ── Triple fence: exactly ONE ghost (passable) lane ───────────────
             ghost_lane = random.randint(0, 2)
             for lane in range(3):
@@ -906,7 +1063,7 @@ class DerbyDash:
         self.survive_time = self.race_frame / FPS
         self.base_score   = int(self.survive_time * 10)
 
-        # Speed / difficulty ramp
+        # Base speed + time ramp; whiskey bonus applied in drunk-effects block below.
         self.game_speed    = 0.010 + self.survive_time * 0.00013
         self.spawn_interval = max(32, 80 - self.survive_time * 1.0)
 
@@ -915,38 +1072,51 @@ class DerbyDash:
         self.spawn_timer += 1
         if self.spawn_timer >= self.spawn_interval:
             self.spawn_timer = 0
-            spawn_depth = max(0.70, 1.0 - self.drunk_level * 0.030)
+            # Sober = obstacles appear near the horizon (lots of warning).
+            # Drunk = they pop in much closer (less time to react).
+            spawn_depth = max(0.70, 0.98 - self.drunk_level * 0.012)
             self._spawn_wave(spawn_depth)
 
-        # Jump physics
+        # Jump physics — gravity scales with game speed so slow = floatier arc.
+        # Base gravity 0.9 at speed 0.010; proportionally less at lower speeds.
         if self.is_jumping:
-            self.jump_vel   += 0.9
-            self.player_y   += self.jump_vel
+            gravity         = 0.9 * (self.game_speed / 0.010)
+            gravity         = max(0.30, gravity)   # never TOO floaty
+            self.jump_vel  += gravity
+            self.player_y  += self.jump_vel
             if self.player_y >= 0:
                 self.player_y  = 0
                 self.is_jumping = False
                 self.jump_vel   = 0.0
 
-        # Drunk effects
-        self.sway_angle    = math.sin(self.race_frame * 0.04) * self.drunk_level * 0.018
-        self.distort_phase += 0.05 + self.drunk_level * 0.01
-        if self.drunk_level >= 3:
+        # WHISKEY: each unit adds +0.003 to game speed (overrides flat base)
+        speed_bonus = self.fx_speed * 0.0015
+        self.game_speed = (0.010 + self.survive_time * 0.00013) + speed_bonus
+
+        # CIDER: screen wobble / stumble
+        self.sway_angle    = math.sin(self.race_frame * 0.04) * self.fx_wobble * 0.013
+        self.distort_phase += 0.05
+        if self.fx_wobble >= 1:
             self.stumble_timer -= 1
             if self.stumble_timer <= 0:
                 self.stumble_timer = random.randint(55, 130)
-                self.stumble_dx    = (random.random() - 0.5) * 26 * self.drunk_level \
+                self.stumble_dx    = (random.random() - 0.5) * 15 * self.fx_wobble \
                                      if random.random() < 0.4 else 0.0
+        else:
+            self.stumble_dx = 0.0
 
         self._process_input_queue()
 
         # Move objects
         for obs in self.obstacles:
             obs.update(self.game_speed)
-        self.obstacles = [o for o in self.obstacles if o.depth > -0.08]
+        # Remove obstacles the instant they pass the player (depth <= 0)
+        self.obstacles = [o for o in self.obstacles if o.depth > 0.0]
 
         for g in self.guards:
             g.update(self.game_speed, self.player_lane)
-        self.guards = [g for g in self.guards if g.depth > -0.08]
+        # Guards also vanish once passed
+        self.guards = [g for g in self.guards if g.depth > 0.0]
 
         # Collision detection — hit zone is depth 0.0–0.13
         for obs in self.obstacles:
@@ -957,23 +1127,84 @@ class DerbyDash:
             if not (HIT_DEPTH_MIN <= obs.depth <= HIT_DEPTH_MAX):
                 continue
             clear_jump = self.is_jumping and self.player_y < -28 and not obs.block_jump
-            clear_duck = self.is_ducking and obs.block_duck
-            if not clear_jump and not clear_duck:
+            if not clear_jump:
+                final = int(self.base_score * self.multiplier)
+                self._record_score(final)
                 self.state = self.STATE_GAMEOVER
                 return
 
         for g in self.guards:
             if g.lane == self.player_lane and HIT_DEPTH_MIN <= g.depth <= HIT_DEPTH_MAX:
+                final = int(self.base_score * self.multiplier)
+                self._record_score(final)
                 self.state = self.STATE_GAMEOVER
                 return
 
         self.bg_offset += self.game_speed * 60
 
+
+    # ─────────────────────────────────────────────────────────────────────────
+    #  CUTSCENE (bar → race transition)
+    # ─────────────────────────────────────────────────────────────────────────
+    def _cutscene_advance(self):
+        """Skip to next image or start race if on last."""
+        # If mid-fade-in, jump to hold; if holding or fading out, go to next
+        if self._cutscene_fade in ("in", "hold"):
+            self._cutscene_fade  = "out"
+            self._cutscene_timer = 0
+
+    def _update_cutscene(self):
+        self._cutscene_timer += 1
+        FADE_SPEED = 6       # alpha units per frame
+        HOLD_FRAMES = 160    # ~2.7s hold between fades
+
+        if self._cutscene_fade == "in":
+            self._cutscene_alpha = min(255, self._cutscene_alpha + FADE_SPEED)
+            if self._cutscene_alpha >= 255:
+                self._cutscene_fade  = "hold"
+                self._cutscene_timer = 0
+
+        elif self._cutscene_fade == "hold":
+            if self._cutscene_timer >= HOLD_FRAMES:
+                self._cutscene_fade  = "out"
+                self._cutscene_timer = 0
+
+        elif self._cutscene_fade == "out":
+            self._cutscene_alpha = max(0, self._cutscene_alpha - FADE_SPEED)
+            if self._cutscene_alpha <= 0:
+                self._cutscene_idx += 1
+                if self._cutscene_idx >= len(self._cutscene_images):
+                    # All images shown — start race
+                    self.state = self.STATE_RACE
+                else:
+                    self._cutscene_fade  = "in"
+                    self._cutscene_timer = 0
+
+    def _draw_cutscene(self):
+        surf = self.screen
+        surf.fill((0, 0, 0))
+        if self._cutscene_idx < len(self._cutscene_images):
+            img = self._cutscene_images[self._cutscene_idx].copy()
+            img.set_alpha(self._cutscene_alpha)
+            surf.blit(img, (0, 0))
+        # "tap to skip" hint
+        if self._cutscene_alpha > 120:
+            hint = self.f_tiny.render("PRESS ANY KEY TO CONTINUE", True,
+                                      (180, 150, 80, self._cutscene_alpha))
+            surf.blit(hint, hint.get_rect(center=(W // 2, H - 20)))
+
+    def _record_score(self, final: int):
+        """Save score into the in-memory leaderboard (top 8 kept)."""
+        self.last_score = (final, self.survive_time, self.drunk_level)  # drunk_level=total
+        self.high_scores.append(self.last_score)
+        self.high_scores.sort(key=lambda x: -x[0])
+        self.high_scores = self.high_scores[:8]
+
     def _draw_race(self):
         surf = self.screen
 
         # ── Camera shake / sway ───────────────────────────────────────────────
-        sway_x = math.sin(self.race_frame * 0.055) * self.drunk_level * 5 + self.stumble_dx * 0.3
+        sway_x = math.sin(self.race_frame * 0.055) * self.fx_wobble * 3 + self.stumble_dx * 0.3
         # We draw everything onto a temp surface then rotate/offset it
         scene = pygame.Surface((W, H))
 
@@ -984,28 +1215,29 @@ class DerbyDash:
         all_objs.sort(key=lambda x: -x[0])
         for _, obj, kind in all_objs:
             if kind == "obs":
-                obj.draw(scene, drunk_level=self.drunk_level)
+                obj.draw(scene, drunk_level=self.drunk_level)  # ghost alpha
             else:
                 obj.draw(scene)
 
         self._draw_player(scene)
 
-        # Drunk overlays
-        if self.drunk_level >= 2:
-            vig = pygame.Surface((W, H), pygame.SRCALPHA)
-            alpha = min(180, self.drunk_level * 18)
-            pygame.draw.circle(vig, (180, 0, 0, 0), (W // 2, H // 2), W // 2)
-            # radial vignette
+        # ── Per-drink visual overlays ─────────────────────────────────────────
+        # CIDER: dark vignette edges (wobble)
+        if self.fx_wobble >= 1:
+            vig   = pygame.Surface((W, H), pygame.SRCALPHA)
+            alpha = min(160, self.fx_wobble * 18)
             for radius in range(W // 2, W // 2 - 80, -8):
                 a = max(0, int((1 - radius / (W / 2)) * alpha * 2))
                 pygame.draw.circle(vig, (0, 0, 0, a), (W // 2, H // 2), radius, 8)
             scene.blit(vig, (0, 0))
 
-        if self.drunk_level >= 4:
-            flash_alpha = int(abs(math.sin(self.distort_phase)) * (self.drunk_level - 3) * 20)
-            flash = pygame.Surface((W, H), pygame.SRCALPHA)
-            flash.fill((0, 180, 0, flash_alpha))
-            scene.blit(flash, (0, 0))
+        # BEER: blur (downscale-upscale)
+        if self.fx_blur >= 1:
+            blur_divisor = max(2, 11 - self.fx_blur // 2)   # 1 beer=÷10, 10 beers=÷6
+            small   = pygame.transform.smoothscale(scene, (W // blur_divisor, H // blur_divisor))
+            blurred = pygame.transform.smoothscale(small, (W, H))
+            blurred.set_alpha(min(210, self.fx_blur * 24))
+            scene.blit(blurred, (0, 0))
 
         # Apply sway rotation to scene
         angle_deg = math.degrees(self.sway_angle)
@@ -1364,54 +1596,45 @@ class DerbyDash:
         jock_seat_y = body_top - 2        # sits right on the withers
         arm_bob     = int(math.sin(t * 0.52) * 3)
 
-        if self.is_ducking:
-            # Tucked flat — helmet visible just above neck
-            helm_cx = head_cx
-            helm_y  = neck_top_y - 16
-            pygame.draw.ellipse(surf, (175, 35, 35),
-                                (helm_cx - 13, helm_y - 8, 26, 16))
-            pygame.draw.rect(surf,  (145, 24, 24),
-                             (helm_cx - 15, helm_y + 6, 30, 4), border_radius=2)
-        else:
-            # Seat straddling withers
-            pygame.draw.ellipse(surf, (40, 58, 78),
-                                (barrel_cx - 16, jock_seat_y - 8, 32, 14))
+        # Seat straddling withers
+        pygame.draw.ellipse(surf, (40, 58, 78),
+                            (barrel_cx - 16, jock_seat_y - 8, 32, 14))
 
-            # Torso — leans forward, front-on so appears narrow
-            tor_bot = (barrel_cx, jock_seat_y - 4)
-            tor_top = (barrel_cx + 1, jock_seat_y - 30 + arm_bob)
-            pygame.draw.line(surf, (40, 58, 78), tor_bot, tor_top, 13)
-            # Silk stripes (horizontal)
-            for si, sc in enumerate([(215, 45, 45), (235, 235, 50), (215, 45, 45)]):
-                sy = tor_bot[1] - 5 - si * 7
-                pygame.draw.line(surf, sc,
-                                 (tor_top[0] - 7, sy), (tor_top[0] + 7, sy), 4)
+        # Torso — leans forward, front-on so appears narrow
+        tor_bot = (barrel_cx, jock_seat_y - 4)
+        tor_top = (barrel_cx + 1, jock_seat_y - 30 + arm_bob)
+        pygame.draw.line(surf, (40, 58, 78), tor_bot, tor_top, 13)
+        # Silk stripes (horizontal)
+        for si, sc in enumerate([(215, 45, 45), (235, 235, 50), (215, 45, 45)]):
+            sy = tor_bot[1] - 5 - si * 7
+            pygame.draw.line(surf, sc,
+                             (tor_top[0] - 7, sy), (tor_top[0] + 7, sy), 4)
 
-            # Arms reaching forward
-            ay = tor_top[1] + 6 + arm_bob
-            for sign in (-1, 1):
-                ax = barrel_cx + sign * 20
-                pygame.draw.line(surf, (40, 58, 78),
-                                 tor_top, (ax, ay + 4), 5)
-                # Rein lines to bridle
-                pygame.draw.line(surf, (150, 112, 42),
-                                 (ax, ay + 4),
-                                 (head_cx + sign * 8, head_jaw_y - 14), 2)
+        # Arms reaching forward
+        ay = tor_top[1] + 6 + arm_bob
+        for sign in (-1, 1):
+            ax = barrel_cx + sign * 20
+            pygame.draw.line(surf, (40, 58, 78),
+                             tor_top, (ax, ay + 4), 5)
+            # Rein lines to bridle
+            pygame.draw.line(surf, (150, 112, 42),
+                             (ax, ay + 4),
+                             (head_cx + sign * 8, head_jaw_y - 14), 2)
 
-            # Head — small circle, front-on
-            hr  = 10
-            hcx = barrel_cx
-            hcy = tor_top[1] - hr
-            pygame.draw.circle(surf, (208, 162, 116), (hcx, hcy), hr)
-            # Helmet dome
-            pygame.draw.ellipse(surf, (175, 35, 35),
-                                (hcx - hr - 1, hcy - hr, hr * 2 + 2, hr + 3))
-            pygame.draw.rect(surf,  (145, 24, 24),
-                             (hcx - hr - 3, hcy + 2, hr * 2 + 6, 4),
-                             border_radius=2)
-            # Goggles
-            pygame.draw.ellipse(surf, (55, 125, 195), (hcx - 10, hcy - 3, 8, 6))
-            pygame.draw.ellipse(surf, (55, 125, 195), (hcx + 2,  hcy - 3, 8, 6))
+        # Head — small circle, front-on
+        hr  = 10
+        hcx = barrel_cx
+        hcy = tor_top[1] - hr
+        pygame.draw.circle(surf, (208, 162, 116), (hcx, hcy), hr)
+        # Helmet dome
+        pygame.draw.ellipse(surf, (175, 35, 35),
+                            (hcx - hr - 1, hcy - hr, hr * 2 + 2, hr + 3))
+        pygame.draw.rect(surf,  (145, 24, 24),
+                         (hcx - hr - 3, hcy + 2, hr * 2 + 6, 4),
+                         border_radius=2)
+        # Goggles
+        pygame.draw.ellipse(surf, (55, 125, 195), (hcx - 10, hcy - 3, 8, 6))
+        pygame.draw.ellipse(surf, (55, 125, 195), (hcx + 2,  hcy - 3, 8, 6))
 
         # ── LANE INDICATOR DOTS ───────────────────────────────────────────────
         for i in range(3):
@@ -1445,31 +1668,29 @@ class DerbyDash:
         tt = self.f_large.render(f"{self.survive_time:.1f}s", True, C_WHITE)
         surf.blit(tt, (W - tt.get_width() - 16, 8))
 
-        # ── Drunk level indicator (bottom-left) ───────────────────────────────
-        if self.drunk_level > 0:
-            dl_bg = pygame.Surface((220, 32), pygame.SRCALPHA)
-            dl_bg.fill((0, 0, 0, 120))
-            surf.blit(dl_bg, (0, H - 32))
-
-            label = ("WRECKED"   if self.drunk_level >= 8 else
-                     "VERY DRUNK" if self.drunk_level >= 4 else
-                     "TIPSY")
-            dcol = C_RED if self.drunk_level >= 4 else C_GOLD
-            dt = self.f_small.render(f"* {label}", True, dcol)
-            surf.blit(dt, (10, H - 26))
-
-        # Input delay warning
+        # ── Per-effect HUD indicators (bottom-left) ──────────────────────────
+        active_fx = []
+        if self.fx_blur:   active_fx.append(("BLUR",  f"x{self.fx_blur}",  (100, 160, 240)))
+        if self.fx_wobble: active_fx.append(("WOBBLE",f"x{self.fx_wobble}",(220, 140,  50)))
+        if self.fx_speed:  active_fx.append(("SPEED", f"x{self.fx_speed}", (240,  80,  80)))
+        if self.fx_delay:  active_fx.append(("DELAY", f"x{self.fx_delay}", (170,  80, 220)))
+        if active_fx:
+            panel_w = 18 + len(active_fx) * 80
+            dl_bg = pygame.Surface((panel_w, 28), pygame.SRCALPHA)
+            dl_bg.fill((0, 0, 0, 130))
+            surf.blit(dl_bg, (0, H - 28))
+            for fi, (label, count, col) in enumerate(active_fx):
+                lt = self.f_tiny.render(f"{label} {count}", True, col)
+                surf.blit(lt, (8 + fi * 80, H - 20))
         if self.input_queue:
-            wt = self.f_tiny.render(f"  {len(self.input_queue)} input(s) queued...", True, (255, 140, 40))
-            surf.blit(wt, (10, H - 44))
+            wt = self.f_tiny.render(f"  {len(self.input_queue)} delayed...", True, (170, 80, 220))
+            surf.blit(wt, (8, H - 42))
 
         # ── Jump / duck state (bottom-centre) ────────────────────────────────
         if self.is_jumping:
             jt = self.f_med.render("[ JUMP ]", True, (100, 180, 255))
             surf.blit(jt, jt.get_rect(center=(W // 2, H - 24)))
-        elif self.is_ducking:
-            dt2 = self.f_med.render("[ DUCK ]", True, (80, 220, 120))
-            surf.blit(dt2, dt2.get_rect(center=(W // 2, H - 24)))
+
 
         # Controls reminder fading over first 5 seconds
         if self.survive_time < 5:
@@ -1477,7 +1698,7 @@ class DerbyDash:
             ct_bg = pygame.Surface((W, 22), pygame.SRCALPHA)
             ct_bg.fill((0, 0, 0, alpha // 2))
             surf.blit(ct_bg, (0, H - 22))
-            ct    = self.f_tiny.render("LEFT / RIGHT — change lane     UP — jump     DOWN — duck", True,
+            ct    = self.f_tiny.render("LEFT / RIGHT — change lane          UP — jump", True,
                                        (int(C_DARK_GOLD[0] * alpha / 220),
                                         int(C_DARK_GOLD[1] * alpha / 220),
                                         int(C_DARK_GOLD[2] * alpha / 220)))
@@ -1514,11 +1735,17 @@ class DerbyDash:
         surf.blit(fl_t, fl_t.get_rect(center=(W // 2, py + 178)))
 
         # Breakdown
+        fx_parts = []
+        if self.fx_blur:   fx_parts.append(f"blur:{self.fx_blur}")
+        if self.fx_wobble: fx_parts.append(f"wobble:{self.fx_wobble}")
+        if self.fx_speed:  fx_parts.append(f"speed:{self.fx_speed}")
+        if self.fx_delay:  fx_parts.append(f"delay:{self.fx_delay}")
+        fx_str = "  ".join(fx_parts) if fx_parts else "sober"
         for j, line in enumerate([
             f"Base score:  {self.base_score}",
             f"Multiplier:  x{self.multiplier:.1f}",
             f"Survived:    {self.survive_time:.1f}s",
-            f"Drunk level: {self.drunk_level}",
+            f"Effects:     {fx_str}",
         ]):
             lt = self.f_small.render(line, True, C_WHITE)
             surf.blit(lt, lt.get_rect(center=(W // 2, py + 210 + j * 24)))
