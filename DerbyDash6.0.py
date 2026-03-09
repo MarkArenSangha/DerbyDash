@@ -738,7 +738,6 @@ class DerbyDash:
             pygame.draw.rect(surf, bhi, (bx-bw2//2, shelf_y-bh2, max(2,bw2//4), bh2), border_radius=3)
             pygame.draw.rect(surf, bc,  (bx-bw2//4, shelf_y-bh2-13, bw2//2, 13))
             pygame.draw.rect(surf, (175, 138, 78), (bx-bw2//4-1, shelf_y-bh2-15, bw2//2+2, 4))
-            # Mirror reflection
             pygame.draw.rect(surf, tuple(min(255,c+50) for c in bc),
                              (bx-bw2//2, mir_y+6, bw2, max(3,bh2//4)), border_radius=2)
 
@@ -798,8 +797,8 @@ class DerbyDash:
         shake_x = int(math.sin(t * 4.2) * 8)    # fast horizontal shake
         shake_y = int(math.sin(t * 4.2 * 1.3) * 4)
         # Shaker sits to the right of the barman's head, raised
-        shaker_cx = bm_x + 70 + shake_x          # 70px right of centre
-        shaker_cy = bm_ground - 130 + shake_y     # head-height
+        shaker_cx = bm_x + 36 + shake_x          # 36px right of centre — closer to body
+        shaker_cy = bm_ground - 118 + shake_y     # just above head
         shaker_x  = shaker_cx - 10
         shaker_y  = shaker_cy - 20
         # Right arm reaches out toward shaker from body
@@ -854,7 +853,7 @@ class DerbyDash:
         if self.drunk_level >= 8:
             blines = ["Mate... I think you've", "had quite enough now."]
         elif self.drunk_level >= 5:
-            blines = ["You sure you're fit", "to ride like that?"]
+            blines = ["Rough day,", "huh?"]
         elif len(self.drink_history) == 0:
             blines = ["Welcome to The Derby!", "What can I get ya?"]
 
@@ -895,8 +894,13 @@ class DerbyDash:
                 surf.blit(gl, (cx-8, counter_y-card_h-8))
                 draw_round_rect(surf, bg, (cx, counter_y-card_h, card_w, card_h), 7,
                                 border=2, border_color=d2["color"])
-            sym = self.f_large.render(d2["symbol"], True, d2["color"])
-            surf.blit(sym, sym.get_rect(center=(cx+card_w//2, counter_y-card_h+24)))
+            # Try to render emoji using a system font that supports them
+            try:
+                emoji_font = pygame.font.SysFont("segoeuiemoji,applesymbols,notocoloremoji", 32)
+                sym = emoji_font.render(d2["emoji"], True, d2["color"])
+            except Exception:
+                sym = self.f_large.render(d2["symbol"], True, d2["color"])
+            surf.blit(sym, sym.get_rect(center=(cx+card_w//2, counter_y-card_h+26)))
             nm2 = self.f_small.render(d2["name"],  True, d2["color"])
             surf.blit(nm2, nm2.get_rect(center=(cx+card_w//2, counter_y-card_h+50)))
             effects = []
