@@ -67,10 +67,10 @@ HIT_DEPTH_MAX = 0.13
 # ─────────────────────────────────────────────────────────────────────────────
 DRINKS = [
     dict(name="WATER",   emoji="💧", symbol="~", mult=1.0, drunk=0, color=(126, 200, 227)),
-    dict(name="BEER",    emoji="🍺", symbol="B", mult=1.5, drunk=1, color=(240, 165,   0)),
-    dict(name="CIDER",   emoji="🍎", symbol="C", mult=2.0, drunk=2, color=(192,  57,  43)),
-    dict(name="WHISKEY", emoji="🥃", symbol="W", mult=3.0, drunk=3, color=(139,  69,  19)),
-    dict(name="VODKA",   emoji="🍸", symbol="V", mult=5.0, drunk=5, color=(160, 216, 239)),
+    dict(name="BEER",    emoji="🍺", symbol="B", mult=1.2, drunk=1, color=(240, 165,   0)),
+    dict(name="CIDER",   emoji="🍎", symbol="C", mult=1.5, drunk=2, color=(192,  57,  43)),
+    dict(name="WHISKEY", emoji="🥃", symbol="W", mult=2.0, drunk=3, color=(139,  69,  19)),
+    dict(name="VODKA",   emoji="🍸", symbol="V", mult=2.5, drunk=5, color=(160, 216, 239)),
 ]
 MAX_DRINKS = 5
 
@@ -122,16 +122,17 @@ def draw_round_rect(surface, color, rect, radius=8, border=0, border_color=None)
 #  OBSTACLE  (dataclass-style)
 # ─────────────────────────────────────────────────────────────────────────────
 class Obstacle:
-    def __init__(self, lane: int, otype: dict):
-        self.lane      = lane
-        self.depth     = 1.0
-        self.label     = otype["label"]
-        self.color     = otype["color"]
-        self.alt       = otype["alt"]
-        self.rel_w     = otype["rel_w"]
-        self.rel_h     = otype["rel_h"]
+    def __init__(self, lane: int, otype: dict, spawn_depth: float = 1.0):
+        self.lane       = lane
+        self.depth      = spawn_depth
+        self.label      = otype["label"]
+        self.color      = otype["color"]
+        self.alt        = otype["alt"]
+        self.rel_w      = otype["rel_w"]
+        self.rel_h      = otype["rel_h"]
         self.block_jump = otype["block_jump"]
         self.block_duck = otype["block_duck"]
+        self.is_ghost   = False   # set True for passable triple-fence ghost lane
 
     def update(self, speed: float):
         self.depth -= speed
@@ -144,18 +145,33 @@ class Obstacle:
         h    = lw * self.rel_h
         return pygame.Rect(cx - w / 2, base - h, w, h)
 
-    def draw(self, surf: pygame.Surface):
+    def draw(self, surf: pygame.Surface, drunk_level: int = 0):
         r = self.screen_rect()
         if r.width < 2 or r.height < 2:
             return
-        if self.label == "FENCE":
-            self._draw_fence(surf, r)
-        elif self.label == "HAY":
-            self._draw_hay(surf, r)
-        elif self.label == "BARRIER":
-            self._draw_barrier(surf, r)
-        elif self.label == "HURDLE":
-            self._draw_hurdle(surf, r)
+        is_ghost = getattr(self, "is_ghost", False)
+        if is_ghost:
+            # Draw ghost fence onto a temp SRCALPHA surface, then blit with reduced alpha.
+            # Sober players see it clearly as faded; drunk players see almost opaque (hard to tell).
+            # ghost_alpha: 80 when sober, rises to 210 when very drunk
+            ghost_alpha = min(220, 80 + drunk_level * 14)
+            tmp = pygame.Surface((r.width + 20, r.height + 20), pygame.SRCALPHA)
+            tmp.fill((0, 0, 0, 0))
+            r_local = pygame.Rect(10, 10, r.width, r.height)
+            if self.label == "FENCE":
+                self._draw_fence_on(tmp, r_local)
+            # Set alpha of whole surface
+            tmp.set_alpha(ghost_alpha)
+            surf.blit(tmp, (r.x - 10, r.y - 10))
+        else:
+            if self.label == "FENCE":
+                self._draw_fence(surf, r)
+            elif self.label == "HAY":
+                self._draw_hay(surf, r)
+            elif self.label == "BARRIER":
+                self._draw_barrier(surf, r)
+            elif self.label == "HURDLE":
+                self._draw_hurdle(surf, r)
 
     def _draw_fence(self, surf, r):
         # Drop shadow
@@ -170,6 +186,22 @@ class Obstacle:
             pygame.draw.rect(surf, self.alt,  (px, r.y, post_w, r.height), border_radius=2)
             pygame.draw.rect(surf, post_hi,   (px, r.y, max(1, post_w // 3), r.height))
         # Horizontal rails with highlight
+        rail_h  = max(3, r.height // 4)
+        rail_hi = tuple(min(255, c + 60) for c in self.color)
+        for frac in (0.18, 0.58):
+            ry = r.y + int(r.height * frac)
+            pygame.draw.rect(surf, self.color, (r.x, ry, r.width, rail_h), border_radius=2)
+            pygame.draw.rect(surf, rail_hi,   (r.x, ry, r.width, max(1, rail_h // 3)))
+        pygame.draw.rect(surf, (0, 0, 0), r, 1)
+
+    def _draw_fence_on(self, surf, r):
+        """Same as _draw_fence but works on any surface (used for ghost alpha blit)."""
+        post_w  = max(3, r.width // 6)
+        post_hi = tuple(min(255, c + 50) for c in self.alt)
+        for i in range(5):
+            px = r.x + i * r.width // 4
+            pygame.draw.rect(surf, self.alt,  (px, r.y, post_w, r.height), border_radius=2)
+            pygame.draw.rect(surf, post_hi,   (px, r.y, max(1, post_w // 3), r.height))
         rail_h  = max(3, r.height // 4)
         rail_hi = tuple(min(255, c + 60) for c in self.color)
         for frac in (0.18, 0.58):
@@ -258,10 +290,16 @@ class Guard:
     def update(self, speed: float, player_lane: int):
         self.depth -= speed * 0.70
         self.anim  += 1
-        # Switch toward player lane exactly once, when close enough to be visible
-        if not self.has_switched and self.depth < 0.72 and random.random() < 0.012:
-            self.lane         = player_lane
-            self.has_switched = True
+        # Switch toward player lane exactly once.
+        # Random window: depth 0.65→0.50. Hard deadline: force switch at depth 0.45
+        # so the guard ALWAYS finishes moving well before reaching the hit zone (0.13).
+        if not self.has_switched:
+            if self.depth < 0.65 and random.random() < 0.025:
+                self.lane         = player_lane
+                self.has_switched = True
+            elif self.depth <= 0.45:
+                self.lane         = player_lane
+                self.has_switched = True
 
     def draw(self, surf: pygame.Surface):
         cx   = lane_to_x(self.lane, self.depth)
@@ -472,164 +510,225 @@ class DerbyDash:
 
     def _draw_bar(self):
         surf = self.screen
-        surf.fill(C_BG)
-
-        # Background wood texture lines
-        for i in range(0, H, 18):
-            pygame.draw.line(surf, (18, 9, 0), (0, i), (W, i))
-
-        # Title bar
-        pygame.draw.rect(surf, (30, 15, 0), (0, 0, W, 56))
-        pygame.draw.line(surf, C_DARK_GOLD, (0, 56), (W, 56), 2)
-        title = self.f_large.render("🏇  DERBY DASH  —  THE BAR  🍺", True, C_WHITE)
-        surf.blit(title, title.get_rect(center=(W // 2, 28)))
-
-        # Stats row
-        stats = self.f_med.render(
-            f"DRINKS: {len(self.drink_history)}/{MAX_DRINKS}     "
-            f"MULTIPLIER: x{self.multiplier:.1f}     "
-            f"DRUNK LEVEL: {self.drunk_level}",
-            True, C_GOLD)
-        surf.blit(stats, stats.get_rect(center=(W // 2, 76)))
-
-        # Drunk meter
+        t    = pygame.time.get_ticks() / 1000.0
         max_drunk = 15
-        meter_w, meter_h = 340, 14
-        mx = W // 2 - meter_w // 2
-        my = 92
-        pygame.draw.rect(surf, (30, 15, 0), (mx, my, meter_w, meter_h))
-        frac = min(self.drunk_level / max_drunk, 1.0)
-        bar_color = C_GREEN if frac < 0.4 else (C_GOLD if frac < 0.70 else C_RED)
-        pygame.draw.rect(surf, bar_color, (mx, my, int(meter_w * frac), meter_h))
-        pygame.draw.rect(surf, C_DARK_GOLD, (mx, my, meter_w, meter_h), 1)
-        label_l = self.f_tiny.render("SOBER", True, C_DARK_GOLD)
-        label_r = self.f_tiny.render("WRECKED", True, C_DARK_GOLD)
-        surf.blit(label_l, (mx, my + meter_h + 3))
-        surf.blit(label_r, (mx + meter_w - label_r.get_width(), my + meter_h + 3))
 
-        # ── Drink cards ───────────────────────────────────────────────────────
-        card_w, card_h = 140, 130
-        gap = 12
-        total_w = len(DRINKS) * card_w + (len(DRINKS) - 1) * gap
-        start_x = W // 2 - total_w // 2
-        card_y  = 128
+        # ── BACKGROUND — warm amber pub interior ──────────────────────────────
+        for i in range(H):
+            frac = i / H
+            col  = (int(26 + frac * 12), int(12 + frac * 8), int(0 + frac * 3))
+            pygame.draw.line(surf, col, (0, i), (W, i))
+        # Wood panelling
+        for row in range(0, H - 120, 28):
+            pygame.draw.line(surf, (42, 20, 4), (0, row), (W, row), 1)
+            pygame.draw.line(surf, (54, 28, 8), (0, row + 2), (W, row + 2), 1)
 
-        for i, d in enumerate(DRINKS):
-            cx   = start_x + i * (card_w + gap)
-            sel  = (i == self.selected_drink)
-            border_col = d["color"] if sel else (60, 30, 0)
-            bg_col     = (36, 18, 0) if sel else (20, 10, 0)
-            draw_round_rect(surf, bg_col, (cx, card_y, card_w, card_h), 8,
-                            border=2 if sel else 1, border_color=border_col)
+        # ── BACK WALL MIRROR ─────────────────────────────────────────────────
+        mir_y = 25
+        pygame.draw.rect(surf, (38, 52, 65), (70, mir_y, W - 140, 120))
+        pygame.draw.rect(surf, (62, 88, 110), (70, mir_y, W - 140, 2))
+        pygame.draw.rect(surf, (62, 88, 110), (70, mir_y + 118, W - 140, 2))
+        pygame.draw.rect(surf, (62, 88, 110), (70, mir_y, 2, 120))
+        pygame.draw.rect(surf, (62, 88, 110), (W - 72, mir_y, 2, 120))
+        # Bar sign in mirror
+        sign = self.f_large.render("THE  DERBY", True, C_GOLD)
+        surf.blit(sign, sign.get_rect(center=(W // 2, mir_y + 32)))
+        pygame.draw.line(surf, C_DARK_GOLD, (W//2 - 130, mir_y + 48), (W//2 + 130, mir_y + 48), 1)
+        sub_sign = self.f_tiny.render("EST. 1887  —  FINE ALES & SPIRITS", True, (160, 130, 60))
+        surf.blit(sub_sign, sub_sign.get_rect(center=(W // 2, mir_y + 62)))
 
-            # Glow behind selected card
-            if sel:
-                glow_surf = pygame.Surface((card_w + 20, card_h + 20), pygame.SRCALPHA)
-                glow_col  = d["color"] + (40,)
-                pygame.draw.rect(glow_surf, glow_col, (0, 0, card_w + 20, card_h + 20), border_radius=14)
-                surf.blit(glow_surf, (cx - 10, card_y - 10))
-                draw_round_rect(surf, bg_col, (cx, card_y, card_w, card_h), 8,
-                                border=2, border_color=border_col)
+        # ── BOTTLE SHELF ─────────────────────────────────────────────────────
+        shelf_y = mir_y + 122
+        pygame.draw.rect(surf, (65, 38, 8),  (0, shelf_y, W, 12))
+        pygame.draw.rect(surf, (88, 52, 14), (0, shelf_y, W, 3))
 
-            # Drink symbol (large letter since emoji rendering varies)
-            sym_surf = self.f_large.render(d["symbol"], True, d["color"])
-            surf.blit(sym_surf, sym_surf.get_rect(center=(cx + card_w // 2, card_y + 34)))
-
-            name_surf = self.f_small.render(d["name"], True, d["color"])
-            surf.blit(name_surf, name_surf.get_rect(center=(cx + card_w // 2, card_y + 62)))
-
-            mult_surf = self.f_tiny.render(f"x{d['mult']:.1f} MULT", True, C_WHITE)
-            surf.blit(mult_surf, mult_surf.get_rect(center=(cx + card_w // 2, card_y + 82)))
-
-            drunk_surf = self.f_tiny.render(f"+{d['drunk']} DRUNK", True, (180, 140, 60))
-            surf.blit(drunk_surf, drunk_surf.get_rect(center=(cx + card_w // 2, card_y + 98)))
-
-            # "SELECTED" arrow
-            if sel:
-                arr = self.f_tiny.render("▲ SELECTED", True, d["color"])
-                surf.blit(arr, arr.get_rect(center=(cx + card_w // 2, card_y + 118)))
-
-        # ── Added drinks history dots ─────────────────────────────────────────
-        dot_y = card_y + card_h + 22
-        for i in range(MAX_DRINKS):
-            dot_x = W // 2 - (MAX_DRINKS * 22) // 2 + i * 22 + 11
-            pygame.draw.circle(surf, C_DARK_GOLD, (dot_x, dot_y), 7)
-            if i < len(self.drink_history):
-                pygame.draw.circle(surf, self.drink_history[i]["color"], (dot_x, dot_y), 6)
-
-        # ── Info panel (selected drink details) ──────────────────────────────
-        panel_x, panel_y, panel_w, panel_h = 28, 130, 180, 200
-        draw_round_rect(surf, C_PANEL, (panel_x, panel_y, panel_w, panel_h), 8,
-                        border=1, border_color=(60, 30, 0))
-        d = DRINKS[self.selected_drink]
-        ph = self.f_med.render("SELECTED", True, C_DARK_GOLD)
-        surf.blit(ph, ph.get_rect(center=(panel_x + panel_w // 2, panel_y + 18)))
-        sym = self.f_huge.render(d["symbol"], True, d["color"])
-        surf.blit(sym, sym.get_rect(center=(panel_x + panel_w // 2, panel_y + 70)))
-        nm  = self.f_med.render(d["name"], True, d["color"])
-        surf.blit(nm, nm.get_rect(center=(panel_x + panel_w // 2, panel_y + 108)))
-        for j, line in enumerate([
-                f"Multiplier: x{d['mult']:.1f}",
-                f"Drunk add:  +{d['drunk']}",
-        ]):
-            t = self.f_tiny.render(line, True, C_WHITE)
-            surf.blit(t, t.get_rect(center=(panel_x + panel_w // 2, panel_y + 132 + j * 16)))
-
-        # Effects warning
-        effects = []
-        if d["drunk"] >= 1: effects.append("Input delay")
-        if d["drunk"] >= 2: effects.append("Camera sway")
-        if d["drunk"] >= 3: effects.append("Stumbles")
-        if d["drunk"] >= 5: effects.append("Distortion")
-        for j, ef in enumerate(effects):
-            t = self.f_tiny.render(f"! {ef}", True, C_RED)
-            surf.blit(t, t.get_rect(center=(panel_x + panel_w // 2, panel_y + 164 + j * 14)))
-
-        # ── Current build panel ───────────────────────────────────────────────
-        bp_x, bp_y, bp_w, bp_h = W - 28 - 180, 130, 180, 200
-        draw_round_rect(surf, C_PANEL, (bp_x, bp_y, bp_w, bp_h), 8,
-                        border=1, border_color=(60, 30, 0))
-        bh_t = self.f_med.render("YOUR BUILD", True, C_DARK_GOLD)
-        surf.blit(bh_t, bh_t.get_rect(center=(bp_x + bp_w // 2, bp_y + 18)))
-        m_t = self.f_large.render(f"x{self.multiplier:.1f}", True, C_WHITE)
-        surf.blit(m_t, m_t.get_rect(center=(bp_x + bp_w // 2, bp_y + 62)))
-        ml = self.f_tiny.render("SCORE MULTIPLIER", True, C_DARK_GOLD)
-        surf.blit(ml, ml.get_rect(center=(bp_x + bp_w // 2, bp_y + 86)))
-        # Risk bar
-        risk_frac = min(self.drunk_level / max_drunk, 1.0)
-        rw = bp_w - 30
-        rx, ry = bp_x + 15, bp_y + 108
-        pygame.draw.rect(surf, (30, 15, 0), (rx, ry, rw, 10))
-        rc = C_GREEN if risk_frac < 0.4 else (C_GOLD if risk_frac < 0.7 else C_RED)
-        pygame.draw.rect(surf, rc, (rx, ry, int(rw * risk_frac), 10))
-        pygame.draw.rect(surf, C_DARK_GOLD, (rx, ry, rw, 10), 1)
-        risk_label = "LOW" if risk_frac < 0.33 else ("MEDIUM" if risk_frac < 0.66 else ("HIGH" if risk_frac < 0.9 else "EXTREME"))
-        rl = self.f_tiny.render(f"RISK: {risk_label}", True, rc)
-        surf.blit(rl, rl.get_rect(center=(bp_x + bp_w // 2, bp_y + 126)))
-
-        # Drink history list
-        for j, dh in enumerate(self.drink_history):
-            dht = self.f_tiny.render(f"+ {dh['name']}", True, dh["color"])
-            surf.blit(dht, dht.get_rect(center=(bp_x + bp_w // 2, bp_y + 148 + j * 13)))
-
-        # ── Bottom bar ────────────────────────────────────────────────────────
-        pygame.draw.rect(surf, C_WOOD, (0, H - 60, W, 60))
-        pygame.draw.line(surf, C_DARK_GOLD, (0, H - 60), (W, H - 60), 2)
-        controls = [
-            "← → : SELECT DRINK",
-            "ENTER/SPACE : ADD",
-            "BACKSPACE : REMOVE LAST",
-            "R : START RACE",
+        bottles = [
+            (110, (175, 70, 15),  (215, 100, 35), 17, 48),
+            (148, (28,  85, 30),  (48,  135, 48), 13, 44),
+            (182, (155, 18, 18),  (195, 45,  45), 16, 52),
+            (215, (20,  48, 155), (38,  76,  195),12, 46),
+            (246, (155, 155, 25),(195, 195, 55),  14, 42),
+            (276, (95,  25, 95), (135, 45,  135), 16, 48),
+            (W-276,(28, 115, 75), (48,  155, 105),15, 44),
+            (W-244,(175, 95, 18),(215, 125, 38),  13, 50),
+            (W-210,(18,  76, 155),(38, 106, 195), 17, 46),
+            (W-177,(155, 38, 38),(195, 65,  65),  12, 52),
+            (W-145,(45,  135, 45),(65, 175, 65),  16, 48),
+            (W-110,(135, 75, 18),(175, 105, 38),  14, 44),
         ]
-        for j, c in enumerate(controls):
-            ct = self.f_tiny.render(c, True, C_DARK_GOLD)
-            surf.blit(ct, (20 + j * 210, H - 38))
+        for (bx, bc, bhi, bw2, bh2) in bottles:
+            pygame.draw.rect(surf, bc,  (bx-bw2//2, shelf_y-bh2, bw2, bh2), border_radius=3)
+            pygame.draw.rect(surf, bhi, (bx-bw2//2, shelf_y-bh2, max(2,bw2//4), bh2), border_radius=3)
+            pygame.draw.rect(surf, bc,  (bx-bw2//4, shelf_y-bh2-13, bw2//2, 13))
+            pygame.draw.rect(surf, (175, 138, 78), (bx-bw2//4-1, shelf_y-bh2-15, bw2//2+2, 4))
+            # Mirror reflection
+            pygame.draw.rect(surf, tuple(min(255,c+50) for c in bc),
+                             (bx-bw2//2, mir_y+6, bw2, max(3,bh2//4)), border_radius=2)
 
-        # Start button
-        btn_col = C_DARK_GOLD if self.drink_history else (60, 40, 0)
-        draw_round_rect(surf, btn_col, (W - 175, H - 50, 160, 38), 6)
-        bt = self.f_med.render("START RACE  R", True, C_DARK if self.drink_history else (80, 60, 20))
-        surf.blit(bt, bt.get_rect(center=(W - 95, H - 31)))
+        # ── BAR COUNTER ──────────────────────────────────────────────────────
+        counter_y = H - 195
+        for i in range(24):
+            cc = (max(0,105-i*3), max(0,62-i*2), 8)
+            pygame.draw.rect(surf, cc, (0, counter_y+i, W, 1))
+        pygame.draw.rect(surf, (125, 78, 14), (0, counter_y, W, 3))
+        pygame.draw.rect(surf, (52, 28, 4), (0, counter_y+24, W, H-counter_y-24))
+        for xi in range(0, W, 55):
+            pygame.draw.line(surf, (62, 35, 8), (xi, counter_y+24), (xi+38, H), 1)
+
+        # Stools
+        for sx in (W//2 - 130, W//2 + 130):
+            pygame.draw.ellipse(surf, (68, 38, 8),  (sx-30, counter_y-6, 60, 16))
+            pygame.draw.ellipse(surf, (88, 52, 14), (sx-28, counter_y-8, 56, 12))
+            pygame.draw.line(surf, (78, 46, 10), (sx, counter_y+10), (sx, H-22), 6)
+            pygame.draw.line(surf, (78, 46, 10), (sx-22, H-42), (sx+22, H-42), 4)
+
+        # Glasses on counter
+        for gx, gcol in ((W//2-65, (240,195,55,170)), (W//2+65, (175,215,255,155))):
+            gl = pygame.Surface((24, 32), pygame.SRCALPHA)
+            pygame.draw.rect(gl, (195,215,235,75),  (1,  0, 22, 30), border_radius=3)
+            pygame.draw.rect(gl, gcol,               (2,  7, 20, 20), border_radius=2)
+            pygame.draw.rect(gl, (255,255,255,115),  (3, 9,  5,  16))
+            surf.blit(gl, (gx-12, counter_y-26))
+
+        # ── BARMAN ──────────────────────────────────────────────────────────
+        bm_x = W // 2
+        bm_ground = counter_y - 8
+
+        # Body — white shirt + black vest
+        pygame.draw.rect(surf, (228,222,212), (bm_x-28, bm_ground-105, 56, 95), border_radius=6)
+        pygame.draw.rect(surf, (22, 18,  12), (bm_x-24, bm_ground-103, 48, 90), border_radius=4)
+        # Shirt wings visible either side
+        pygame.draw.polygon(surf, (228,222,212), [
+            (bm_x-10, bm_ground-103),(bm_x, bm_ground-80),(bm_x+10, bm_ground-103)
+        ])
+        # Bow tie
+        pygame.draw.polygon(surf, (175,28,28), [
+            (bm_x-7, bm_ground-95),(bm_x, bm_ground-89),(bm_x+7, bm_ground-95),
+            (bm_x, bm_ground-101)
+        ])
+
+        # Arms wiping bar
+        wipe = int(math.sin(t * 1.4) * 28)
+        pygame.draw.line(surf, (228,222,212), (bm_x-24, bm_ground-65), (bm_x-52+wipe, bm_ground-18), 11)
+        pygame.draw.line(surf, (228,222,212), (bm_x+24, bm_ground-65), (bm_x+22+wipe, bm_ground-18), 11)
+        # Cloth
+        pygame.draw.ellipse(surf, (195,192,178), (bm_x+14+wipe, bm_ground-24, 20, 10))
+
+        # Head
+        pygame.draw.circle(surf, (208,165,118), (bm_x, bm_ground-124), 22)
+        # Receding hair
+        pygame.draw.ellipse(surf, (58,36,16), (bm_x-20, bm_ground-146, 40, 16))
+        # Moustache
+        pygame.draw.ellipse(surf, (58,36,16), (bm_x-13, bm_ground-114, 26, 8))
+        # Eyes (blink occasionally)
+        blink = (int(t * 2.8) % 22 != 0)
+        for ex in (-9, 9):
+            pygame.draw.circle(surf, (48, 28, 8), (bm_x+ex, bm_ground-126), 4)
+            if blink:
+                pygame.draw.circle(surf, (240,198,140), (bm_x+ex-1, bm_ground-127), 1)
+        # Eyebrow raise (animated when speaking)
+        br = int(abs(math.sin(t * 0.7)) * 3)
+        for ex, slope in ((-12, 1), (12, -1)):
+            pygame.draw.line(surf, (58,36,16),
+                             (bm_x+ex, bm_ground-133-br),
+                             (bm_x+ex+slope*8, bm_ground-135-br), 2)
+
+        # ── SPEECH BUBBLE ────────────────────────────────────────────────────
+        d_sel = DRINKS[self.selected_drink]
+        barman_quips = {
+            "WATER":   ["Water? At a derby?", "...alright then."],
+            "BEER":    ["Classic choice mate.", "The ales are fresh!"],
+            "CIDER":   ["Ooh, a cider fan!", "Good vintage that."],
+            "WHISKEY": ["Single malt coming", "right up, sir."],
+            "VODKA":   ["Vodka?! You sure", "you wanna race after?"],
+        }
+        blines = barman_quips.get(d_sel["name"], ["What'll it be?"])
+        if self.drunk_level >= 8:
+            blines = ["Mate... I think you've", "had quite enough now."]
+        elif self.drunk_level >= 5:
+            blines = ["You sure you're fit", "to ride like that?"]
+        elif len(self.drink_history) == 0:
+            blines = ["Welcome to The Derby!", "What can I get ya?"]
+
+        bw2 = 210
+        bh2 = 16 + len(blines) * 22
+        bub_x = bm_x + 36
+        bub_y = bm_ground - 185
+        pygame.draw.rect(surf, (244,240,228), (bub_x, bub_y, bw2, bh2), border_radius=10)
+        pygame.draw.rect(surf, (175,145,75),  (bub_x, bub_y, bw2, bh2), 2, border_radius=10)
+        pygame.draw.polygon(surf, (244,240,228), [
+            (bub_x+10, bub_y+bh2),
+            (bub_x-14, bub_y+bh2+16),
+            (bub_x+30, bub_y+bh2),
+        ])
+        for li, line in enumerate(blines):
+            lt = self.f_small.render(line, True, (28,18,4))
+            surf.blit(lt, (bub_x+10, bub_y+8+li*22))
+
+        # ── DRINK MENU on counter ─────────────────────────────────────────────
+        menu_label = self.f_med.render("WHAT'LL IT BE?", True, C_GOLD)
+        surf.blit(menu_label, menu_label.get_rect(center=(W//2, counter_y - 12)))
+
+        card_w, card_h = 124, 88
+        gap  = 10
+        total = len(DRINKS) * card_w + (len(DRINKS)-1) * gap
+        sx   = W//2 - total//2
+
+        for i, d2 in enumerate(DRINKS):
+            cx  = sx + i * (card_w + gap)
+            sel = (i == self.selected_drink)
+            bg  = (48, 26, 4) if sel else (32, 16, 2)
+            bd  = d2["color"] if sel else (75, 46, 8)
+            draw_round_rect(surf, bg, (cx, counter_y-card_h, card_w, card_h), 7,
+                            border=2 if sel else 1, border_color=bd)
+            if sel:
+                gl = pygame.Surface((card_w+16, card_h+16), pygame.SRCALPHA)
+                pygame.draw.rect(gl, d2["color"]+(42,), (0,0,card_w+16,card_h+16), border_radius=11)
+                surf.blit(gl, (cx-8, counter_y-card_h-8))
+                draw_round_rect(surf, bg, (cx, counter_y-card_h, card_w, card_h), 7,
+                                border=2, border_color=d2["color"])
+            sym = self.f_large.render(d2["symbol"], True, d2["color"])
+            surf.blit(sym, sym.get_rect(center=(cx+card_w//2, counter_y-card_h+24)))
+            nm2 = self.f_small.render(d2["name"],  True, d2["color"])
+            surf.blit(nm2, nm2.get_rect(center=(cx+card_w//2, counter_y-card_h+50)))
+            ms2 = self.f_tiny.render(f"x{d2['mult']:.1f}  +{d2['drunk']}drunk", True, (175,138,58))
+            surf.blit(ms2, ms2.get_rect(center=(cx+card_w//2, counter_y-card_h+68)))
+            if sel:
+                ar = self.f_tiny.render("SELECTED", True, d2["color"])
+                surf.blit(ar, ar.get_rect(center=(cx+card_w//2, counter_y-card_h+82)))
+
+        # ── ORDER HISTORY + DRUNK METER ───────────────────────────────────────
+        hist_lbl = self.f_tiny.render(
+            f"ORDERED: {len(self.drink_history)}/{MAX_DRINKS}    "
+            f"MULT: x{self.multiplier:.2f}    DRUNK: {self.drunk_level}",
+            True, C_DARK_GOLD)
+        surf.blit(hist_lbl, hist_lbl.get_rect(center=(W//2, counter_y+10)))
+        mw, mh = 255, 7
+        mx2 = W//2 - mw//2
+        my2 = counter_y + 22
+        pygame.draw.rect(surf, (22, 10, 2), (mx2, my2, mw, mh))
+        frac = min(self.drunk_level / max_drunk, 1.0)
+        mc2  = C_GREEN if frac < 0.4 else (C_GOLD if frac < 0.7 else C_RED)
+        pygame.draw.rect(surf, mc2, (mx2, my2, int(mw * frac), mh))
+        pygame.draw.rect(surf, C_DARK_GOLD, (mx2, my2, mw, mh), 1)
+        sl = self.f_tiny.render("SOBER",   True, C_DARK_GOLD)
+        wl = self.f_tiny.render("WRECKED", True, C_DARK_GOLD)
+        surf.blit(sl, (mx2, my2+mh+2))
+        surf.blit(wl, (mx2+mw-wl.get_width(), my2+mh+2))
+
+        # ── CONTROLS FOOTER ───────────────────────────────────────────────────
+        ctrl_y = H - 36
+        ctrl_bg = pygame.Surface((W, 40), pygame.SRCALPHA)
+        ctrl_bg.fill((0, 0, 0, 145))
+        surf.blit(ctrl_bg, (0, ctrl_y - 4))
+        for ci, txt in enumerate(["← → : CHOOSE", "ENTER : ORDER", "BACKSPACE : SEND BACK", "R : RIDE!"]):
+            ct = self.f_tiny.render(txt, True, C_DARK_GOLD)
+            surf.blit(ct, (18 + ci * 218, ctrl_y))
+        btn_col = C_DARK_GOLD if self.drink_history else (52, 32, 6)
+        draw_round_rect(surf, btn_col, (W-168, ctrl_y-6, 152, 34), 6)
+        bt2 = self.f_med.render("LET'S RIDE!  R", True, C_DARK if self.drink_history else (85, 60, 18))
+        surf.blit(bt2, bt2.get_rect(center=(W-92, ctrl_y+11)))
+
 
     # ─────────────────────────────────────────────────────────────────────────
     #  RACE PHASE
@@ -669,15 +768,29 @@ class DerbyDash:
         self.game_speed    = 0.010 + self.survive_time * 0.00013
         self.spawn_interval = max(32, 80 - self.survive_time * 1.0)
 
-        # Spawn
+        # Spawn — sober = obstacles spawn further away (more warning time)
+        # drunk_level=0 -> spawn_depth=1.0 (full horizon distance)
+        # drunk_level=10 -> spawn_depth=0.70 (much closer, less warning)
         self.spawn_timer += 1
         if self.spawn_timer >= self.spawn_interval:
             self.spawn_timer = 0
-            otype = random.choice(OBS_TYPES)
-            lane  = random.randint(0, 2)
-            self.obstacles.append(Obstacle(lane, otype))
+            spawn_depth = max(0.70, 1.0 - self.drunk_level * 0.030)
+            # 15% chance to spawn a triple-fence obstacle set instead of normal
+            if random.random() < 0.15:
+                ghost_lane = random.randint(0, 2)
+                for lane in range(3):
+                    obs = Obstacle(lane, OBS_TYPES[0], spawn_depth=spawn_depth)
+                    obs.is_ghost = (lane == ghost_lane)
+                    self.obstacles.append(obs)
+            else:
+                otype = random.choice(OBS_TYPES)
+                lane  = random.randint(0, 2)
+                obs   = Obstacle(lane, otype, spawn_depth=spawn_depth)
+                obs.is_ghost = False
+                self.obstacles.append(obs)
             if random.random() < 0.22:
-                self.guards.append(Guard(random.randint(0, 2)))
+                g = Guard(random.randint(0, 2))
+                self.guards.append(g)
 
         # Jump physics
         if self.is_jumping:
@@ -713,6 +826,8 @@ class DerbyDash:
         for obs in self.obstacles:
             if obs.lane != self.player_lane:
                 continue
+            if getattr(obs, "is_ghost", False):
+                continue   # ghost fence is passable
             if not (HIT_DEPTH_MIN <= obs.depth <= HIT_DEPTH_MAX):
                 continue
             clear_jump = self.is_jumping and self.player_y < -28 and not obs.block_jump
@@ -739,11 +854,13 @@ class DerbyDash:
         self._draw_track_bg(scene)
 
         # Sort obstacles + guards back-to-front (high depth = far = draw first)
-        all_objs = [(obs.depth, obs) for obs in self.obstacles] + \
-                   [(g.depth,   g)   for g   in self.guards]
+        all_objs = [(obs.depth, obs, "obs") for obs in self.obstacles] +                    [(g.depth,   g,   "grd") for g   in self.guards]
         all_objs.sort(key=lambda x: -x[0])
-        for _, obj in all_objs:
-            obj.draw(scene)
+        for _, obj, kind in all_objs:
+            if kind == "obs":
+                obj.draw(scene, drunk_level=self.drunk_level)
+            else:
+                obj.draw(scene)
 
         self._draw_player(scene)
 
@@ -968,197 +1085,161 @@ class DerbyDash:
         pygame.draw.line(surf, (50, 38, 22), (0, HORIZON_Y), (W, HORIZON_Y), 2)
 
     def _draw_player(self, surf):
-        """Draw a horse + jockey at the bottom of the current lane."""
+        """Front-facing horse + jockey viewed from behind/below."""
         px     = int(lane_to_x(self.player_lane, 0.0) + self.stumble_dx)
         ground = H - 10
         jy     = int(self.player_y)   # negative = in air
-        t      = self.bg_offset       # time / animation counter
-
-        # Bob (gallop rhythm)
-        bob = int(math.sin(t * 0.55) * 5)
+        t      = self.bg_offset
+        bob    = int(math.sin(t * 0.55) * 4)
         base_y = ground + jy + bob
 
         # ── SHADOW ────────────────────────────────────────────────────────────
         shadow_scale = max(0.25, 1.0 - abs(jy) / 110)
-        sw = int(130 * shadow_scale)
-        sh_s = pygame.Surface((sw, 16), pygame.SRCALPHA)
-        pygame.draw.ellipse(sh_s, (0, 0, 0, int(80 * shadow_scale)), (0, 0, sw, 16))
-        surf.blit(sh_s, (px - sw // 2, ground - 5))
+        sw = int(120 * shadow_scale)
+        sh_s = pygame.Surface((sw, 14), pygame.SRCALPHA)
+        pygame.draw.ellipse(sh_s, (0, 0, 0, int(75 * shadow_scale)), (0, 0, sw, 14))
+        surf.blit(sh_s, (px - sw // 2, ground - 4))
 
-        # ── HORSE ─────────────────────────────────────────────────────────────
-        # Dimensions (anchored so bottom of legs = base_y)
-        body_w = 100
-        body_h = 44
-        body_x = px - body_w // 2
-        body_y = base_y - 80   # top of horse body
+        horse_col = (62, 38, 16)
+        horse_hi  = (92, 58, 26)
+        hoof_col  = (28, 18, 6)
+        leg_col   = (50, 30, 10)
+        gait      = t * 0.55
 
-        # Gallop leg cycle — four legs, offset phases
-        leg_phase = t * 0.55
-        legs = [
-            # (x_offset_from_px, phase_offset)
-            (-32,  0.0),   # front-left
-            (-14,  math.pi),  # front-right
-            ( 14,  math.pi * 0.5),  # rear-left
-            ( 32,  math.pi * 1.5),  # rear-right
-        ]
-        horse_col  = (60, 38, 18)    # dark chestnut
-        horse_hi   = (90, 58, 28)    # lighter highlight
-        leg_col    = (50, 30, 12)
-        hoof_col   = (30, 20, 8)
+        # ── REAR LEGS (wide stance, front-on) ────────────────────────────────
+        for side, sign in ((-1, -1), (1, 1)):
+            kick = int(math.sin(gait + (0 if side == -1 else math.pi)) * 14)
+            lx   = px + sign * 28
+            # upper leg segment
+            knee_x = lx + sign * 8
+            knee_y = base_y - 28
+            pygame.draw.line(surf, leg_col, (lx, base_y - 52), (knee_x, knee_y), 10)
+            # lower leg
+            foot_x = lx + sign * 14 + kick
+            pygame.draw.line(surf, leg_col, (knee_x, knee_y), (foot_x, base_y - 4), 8)
+            # hoof
+            pygame.draw.ellipse(surf, hoof_col,
+                                (foot_x - 10, base_y - 8, 20, 10))
 
-        # Draw legs first (behind body)
-        for lx_off, phase in legs:
-            lx   = px + lx_off
-            kick = int(math.sin(leg_phase + phase) * 18)
-            # Upper leg
-            knee_x = lx + kick // 2
-            knee_y = base_y - 22
-            pygame.draw.line(surf, leg_col, (lx, base_y - 40), (knee_x, knee_y), 7)
-            # Lower leg
-            foot_x = lx + kick
-            pygame.draw.line(surf, leg_col, (knee_x, knee_y), (foot_x, base_y - 2), 6)
-            # Hoof
-            pygame.draw.ellipse(surf, hoof_col, (foot_x - 7, base_y - 6, 14, 8))
-
-        # Horse body — rounded trapezoid (wider at chest)
-        body_pts = [
-            (body_x + 10,       body_y + body_h),   # rear bottom-left
-            (body_x + body_w,   body_y + body_h),   # chest bottom-right
-            (body_x + body_w,   body_y + 6),        # chest top-right
-            (body_x + body_w - 14, body_y),         # chest top
-            (body_x + 14,       body_y + 8),        # back top
-            (body_x,            body_y + 16),       # rear top
-        ]
-        pygame.draw.polygon(surf, horse_col, body_pts)
-        # Belly highlight
+        # ── HORSE BODY (front-on torso — wider than tall, foreshortened) ─────
+        body_w = 90
+        body_h = 52
+        body_y = base_y - 90
+        # Main ellipse body
+        pygame.draw.ellipse(surf, horse_col, (px - body_w // 2, body_y, body_w, body_h))
+        # Chest highlight
         pygame.draw.ellipse(surf, horse_hi,
-                            (body_x + 20, body_y + body_h - 14, body_w - 30, 12))
-        # Side shading line
-        pygame.draw.line(surf, horse_hi,
-                         (body_x + body_w - 10, body_y + 4),
-                         (body_x + 20,           body_y + 10), 3)
+                            (px - body_w // 4, body_y + 6, body_w // 2, body_h // 3))
+        # Belly lower curve
+        pygame.draw.ellipse(surf, (48, 30, 12),
+                            (px - body_w // 2 + 4, body_y + body_h - 14,
+                             body_w - 8, 18))
 
-        # Neck
-        neck_base_x = body_x + body_w - 8
-        neck_base_y = body_y + 10
-        neck_top_x  = neck_base_x + 22
-        neck_top_y  = body_y - 28
-        neck_pts = [
-            (neck_base_x,      neck_base_y),
-            (neck_base_x + 22, neck_base_y - 4),
-            (neck_top_x + 12,  neck_top_y),
-            (neck_top_x,       neck_top_y + 4),
-        ]
-        pygame.draw.polygon(surf, horse_col, neck_pts)
-        pygame.draw.line(surf, horse_hi,
-                         (neck_base_x + 20, neck_base_y - 3),
-                         (neck_top_x + 10,  neck_top_y + 2), 2)
+        # ── FRONT LEGS (slightly in front of body, front-on) ─────────────────
+        for side, sign in ((-1, -1), (1, 1)):
+            kick = int(math.sin(gait + math.pi * 0.5 + (0 if side == -1 else math.pi)) * 10)
+            lx   = px + sign * 18
+            knee_x = lx + sign * 4
+            knee_y = base_y - 20
+            pygame.draw.line(surf, leg_col, (lx, body_y + body_h), (knee_x, knee_y), 9)
+            foot_x = lx + sign * 8 + kick
+            pygame.draw.line(surf, leg_col, (knee_x, knee_y), (foot_x, base_y - 4), 7)
+            pygame.draw.ellipse(surf, hoof_col, (foot_x - 9, base_y - 8, 18, 9))
 
-        # Mane (flowing lines)
-        mane_col = (25, 15, 5)
+        # ── NECK (shorter, pointing upward from centre of chest) ─────────────
+        neck_w = 28
+        neck_h = 38
+        neck_y = body_y - neck_h + 8
+        pygame.draw.ellipse(surf, horse_col, (px - neck_w // 2, neck_y, neck_w, neck_h + 10))
+        pygame.draw.ellipse(surf, horse_hi,
+                            (px - neck_w // 4, neck_y + 4, neck_w // 2, neck_h // 3))
+
+        # ── HEAD (front-on: roughly round with wide nostrils) ─────────────────
+        head_y = neck_y - 32
+        head_w = 38
+        head_h = 46
+        pygame.draw.ellipse(surf, horse_col, (px - head_w // 2, head_y, head_w, head_h))
+        # Blaze (white stripe down centre of face)
+        pygame.draw.ellipse(surf, (220, 215, 200),
+                            (px - 5, head_y + 6, 10, head_h - 14))
+        # Eyes (front-on: both visible, one each side)
+        for ex in (-14, 14):
+            pygame.draw.circle(surf, (20, 12, 4),  (px + ex, head_y + 14), 5)
+            pygame.draw.circle(surf, (255, 240, 180), (px + ex + 1, head_y + 13), 2)
+        # Nostrils (large, front-on)
+        for nx in (-9, 9):
+            pygame.draw.ellipse(surf, (38, 18, 6),
+                                (px + nx - 5, head_y + head_h - 16, 10, 7))
+        # Bridle across nose
+        pygame.draw.line(surf, (160, 120, 50),
+                         (px - head_w // 2 + 2, head_y + head_h - 18),
+                         (px + head_w // 2 - 2, head_y + head_h - 18), 3)
+        # Crown piece / browband
+        pygame.draw.line(surf, (160, 120, 50),
+                         (px - head_w // 2 + 4, head_y + 10),
+                         (px + head_w // 2 - 4, head_y + 10), 2)
+        # Ears (two small triangles)
+        for ex, ep in ((-10, -1), (10, 1)):
+            pygame.draw.polygon(surf, horse_col, [
+                (px + ex - 4, head_y + 4),
+                (px + ex + 4, head_y + 4),
+                (px + ex + ep, head_y - 10),
+            ])
+        # Mane (hair tuft between ears, flutter)
+        mane_wave = int(math.sin(t * 0.4) * 3)
         for mi in range(5):
-            mane_x = neck_top_x + 4 - mi * 3
-            mane_y = neck_top_y + mi * 4
-            wave   = int(math.sin(t * 0.4 + mi) * 3)
-            pygame.draw.line(surf, mane_col,
-                             (mane_x, mane_y),
-                             (mane_x - 10 + wave, mane_y + 12), 2)
+            mx2 = px - 6 + mi * 3
+            pygame.draw.line(surf, (25, 14, 4),
+                             (mx2, head_y + 2),
+                             (mx2 + mane_wave, head_y - 8 - mi * 2), 2)
 
-        # Head
-        head_x = neck_top_x + 6
-        head_y = neck_top_y - 10
-        head_pts = [
-            (head_x,      head_y + 20),
-            (head_x + 28, head_y + 14),
-            (head_x + 34, head_y + 4),   # nose tip
-            (head_x + 30, head_y),
-            (head_x + 14, head_y + 2),
-            (head_x,      head_y + 10),
-        ]
-        pygame.draw.polygon(surf, horse_col, head_pts)
-        # Eye
-        pygame.draw.circle(surf, (20, 12, 4),  (head_x + 10, head_y + 8),  4)
-        pygame.draw.circle(surf, (255, 240, 180), (head_x + 11, head_y + 7), 1)
-        # Nostril
-        pygame.draw.ellipse(surf, (40, 20, 8), (head_x + 26, head_y + 10, 6, 4))
-        # Bridle / rein
-        pygame.draw.line(surf, (180, 140, 60),
-                         (head_x + 8, head_y + 10),
-                         (head_x + 28, head_y + 6), 2)
-        # Tail
-        tail_x = body_x + 4
-        tail_y = body_y + 6
-        tail_swing = int(math.sin(t * 0.4) * 8)
-        for ti in range(4):
-            pygame.draw.line(surf, mane_col,
-                             (tail_x,       tail_y + ti * 5),
-                             (tail_x - 18 + tail_swing, tail_y + ti * 5 + 20), 2)
-
-        # ── JOCKEY ────────────────────────────────────────────────────────────
-        # Sits on top of horse body, leans forward
-        jock_cx = body_x + body_w - 22   # roughly above horse's centre of mass
-        jock_y  = body_y - 12            # butt level
-
-        # Seat / hips
-        pygame.draw.ellipse(surf, (44, 62, 80), (jock_cx - 12, jock_y - 6, 24, 14))
-
-        # Torso leaning forward
-        torso_top_x = jock_cx + 16
-        torso_top_y = jock_y  - 34
-        pygame.draw.line(surf, (44, 62, 80),
-                         (jock_cx, jock_y), (torso_top_x, torso_top_y), 14)
-
-        # Jockey silks — stripe across torso
-        for si, sc_col in enumerate([(220, 50, 50), (240, 240, 60)]):
-            frac = 0.35 + si * 0.28
-            sx = int(jock_cx + (torso_top_x - jock_cx) * frac)
-            sy = int(jock_y  + (torso_top_y - jock_y)  * frac)
-            pygame.draw.line(surf, sc_col, (sx - 8, sy + 3), (sx + 8, sy - 3), 5)
-
-        # Arms stretched forward holding reins
-        arm_bob = int(math.sin(t * 0.55) * 4)
-        arm_end_x = head_x + 14
-        arm_end_y = head_y + 14 + arm_bob
-        pygame.draw.line(surf, (44, 62, 80),
-                         (torso_top_x - 4, torso_top_y + 6),
-                         (arm_end_x, arm_end_y), 6)
-        # Reins (thin lines from hands to bridle)
-        pygame.draw.line(surf, (180, 140, 60),
-                         (arm_end_x, arm_end_y),
-                         (head_x + 20, head_y + 8), 2)
-
-        # Head
-        head_r = 12
-        pygame.draw.circle(surf, (210, 165, 120),
-                           (torso_top_x + 4, torso_top_y - head_r + 2), head_r)
-        # Helmet
-        pygame.draw.ellipse(surf, (180, 40, 40),
-                            (torso_top_x - 8, torso_top_y - head_r * 2 - 2, head_r * 2 + 4, head_r + 4))
-        pygame.draw.rect(surf, (150, 28, 28),
-                         (torso_top_x - 10, torso_top_y - head_r + 2, head_r * 2 + 8, 4),
-                         border_radius=2)
-        # Goggles
-        pygame.draw.ellipse(surf, (60, 130, 200),
-                            (torso_top_x - 6, torso_top_y - head_r, 9, 6))
-        pygame.draw.ellipse(surf, (60, 130, 200),
-                            (torso_top_x + 4, torso_top_y - head_r, 9, 6))
-
-        # Duck pose — jockey flattens down
+        # ── JOCKEY (sits above the horse, leans forward over neck) ───────────
         if self.is_ducking:
-            # Redraw torso nearly horizontal, flattening over horse's neck
-            pygame.draw.line(surf, (44, 62, 80),
-                             (jock_cx, jock_y), (jock_cx + 38, jock_y - 16), 14)
-            for si, sc_col in enumerate([(220, 50, 50), (240, 240, 60)]):
-                pygame.draw.line(surf, sc_col,
-                                 (jock_cx + 10 + si * 12, jock_y - 4 - si * 3),
-                                 (jock_cx + 22 + si * 12, jock_y - 8 - si * 3), 5)
-            # Head hugging the neck
-            pygame.draw.circle(surf, (210, 165, 120),
-                               (jock_cx + 38, jock_y - 20), head_r)
-            pygame.draw.ellipse(surf, (180, 40, 40),
-                                (jock_cx + 28, jock_y - 30, head_r * 2 + 4, head_r + 4))
+            # Tucked right down — just a helmet poking above the neck
+            helm_y = neck_y - 14
+            pygame.draw.ellipse(surf, (180, 40, 40), (px - 14, helm_y - 10, 28, 18))
+            pygame.draw.rect(surf, (150, 28, 28), (px - 16, helm_y + 6, 32, 5), border_radius=2)
+        else:
+            jock_y = neck_y - 4   # jockey seat level (just above horse shoulders)
 
-        # ── Lane position indicators ──────────────────────────────────────────
+            # Seat / lower body astride the horse
+            pygame.draw.ellipse(surf, (44, 62, 80), (px - 20, jock_y - 10, 40, 16))
+
+            # Torso — angled forward over neck
+            arm_bob = int(math.sin(t * 0.55) * 3)
+            tor_x   = px
+            tor_bot = jock_y - 4
+            tor_top = jock_y - 32 + arm_bob
+            # Draw torso as a thick line (front-on, so it's narrow)
+            pygame.draw.line(surf, (44, 62, 80), (tor_x, tor_bot), (tor_x, tor_top), 16)
+            # Silk stripes across torso (horizontal bands)
+            for si, sc_col in enumerate([(220, 50, 50), (240, 240, 60), (220, 50, 50)]):
+                sy = tor_bot - 6 - si * 8
+                pygame.draw.line(surf, sc_col, (tor_x - 8, sy), (tor_x + 8, sy), 4)
+
+            # Arms out each side gripping reins
+            arm_y  = tor_top + 8 + arm_bob
+            for side, sign in ((-1, -1), (1, 1)):
+                ax = tor_x + sign * 24
+                pygame.draw.line(surf, (44, 62, 80), (tor_x, arm_y), (ax, arm_y + 6), 6)
+                # Reins dropping forward from hands
+                pygame.draw.line(surf, (160, 120, 50),
+                                 (ax, arm_y + 6), (ax + sign * 4, head_y + head_h - 16), 2)
+
+            # Head (front-on: small oval above torso)
+            head_r = 11
+            hx, hy = tor_x, tor_top - head_r + 2
+            pygame.draw.circle(surf, (210, 165, 120), (hx, hy), head_r)
+            # Helmet
+            pygame.draw.ellipse(surf, (180, 40, 40),
+                                (hx - head_r - 1, hy - head_r - 1, head_r * 2 + 2, head_r + 4))
+            pygame.draw.rect(surf, (150, 28, 28),
+                             (hx - head_r - 3, hy + 2, head_r * 2 + 6, 4), border_radius=2)
+            # Goggles (two circles side by side, front-on)
+            pygame.draw.ellipse(surf, (60, 130, 200), (hx - 11, hy - 4, 9, 6))
+            pygame.draw.ellipse(surf, (60, 130, 200), (hx + 2,  hy - 4, 9, 6))
+
+        # ── Lane indicators ──────────────────────────────────────────────────
         for i in range(3):
             dot_x  = int(lane_to_x(i, 0.0))
             active = (i == self.player_lane)
