@@ -1,3 +1,9 @@
+# Download
+# download pygame from pip on terminal
+# Import file
+import pygame
+# Game begin
+
 """
 Derby Dash — First-Person Risk/Reward Runner
 ============================================
