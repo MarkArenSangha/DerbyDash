@@ -1,4 +1,3 @@
-# Make sure to run environment on 3.12 to make it work with packages
 """
 Derby Dash — First-Person Risk/Reward Runner
 ============================================
@@ -22,6 +21,7 @@ RACE PHASE:
 """
 
 import pygame
+import os
 import sys
 import math
 import random
@@ -420,12 +420,11 @@ class DerbyDash:
         self.f_tiny   = pygame.font.SysFont("monospace", 11)
 
         # Cutscene images (bar → race transition)
+        # Cutscene images live in the same folder as derby_dash.py
+        _here = os.path.dirname(os.path.abspath(__file__))
         self._cutscene_images = []
-        for _img_path in [
-            "/mnt/user-data/uploads/derby_dash_image_1.png",
-            "/mnt/user-data/uploads/derby_dash_image_2.png",
-            "/mnt/user-data/uploads/derby_dash_image_3.png",
-        ]:
+        for _img_name in ["cutscene_1.png", "cutscene_2.png", "cutscene_3.png"]:
+            _img_path = os.path.join(_here, _img_name)
             try:
                 img = pygame.image.load(_img_path).convert()
                 img = pygame.transform.smoothscale(img, (W, H))
